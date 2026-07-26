@@ -207,7 +207,9 @@ ever update w1 and w2, so shipping it the averaged gradient for w3 and w4 would 
 spending network bandwidth on numbers it throws away. Reduce-scatter does both at once:
 averages everyone's full gradients and delivers each custodian just its slice. A gets
 `[4, 2]`, B gets `[6, 4]`, and the full averaged gradient never exists on any single
-GPU.
+GPU. That's a bandwidth win, not just a memory one: on a ring, reduce-scatter moves
+half the bytes of a full all-reduce. The other half of the traffic doesn't vanish, it
+becomes the parameter all-gather, deferred to the moment it's needed.
 
 Direction-wise this is the exact mirror of all-gather: big in, small out. One detail
 worth knowing: the reduction you want is an average, not a sum. For bf16 and fp32,
@@ -218,6 +220,12 @@ holds its shard of the averaged gradient. All of this is visible in [PyTorch's F
 collectives
 source](https://github.com/pytorch/pytorch/blob/v2.11.0/torch/distributed/fsdp/_fully_shard/_fsdp_collectives.py)
 if you want to see the machinery.
+
+One nuance that starts to matter at scale: NCCL's bf16 reduction also accumulates in
+bf16 along the way, which gets lossy as the world size grows. That's why FSDP2's mixed
+precision policy lets you compute in bf16 but reduce in fp32 (`reduce_dtype`), trading
+twice the reduce-scatter bytes for numerical safety. That trade is a bandwidth story,
+and it belongs to the next post.
 
 A terminology note, since "scatter" and "sharding" sound interchangeable: sharding is a
 state, scatter is an action. Think of a card game. Dealing a card to each player is a
