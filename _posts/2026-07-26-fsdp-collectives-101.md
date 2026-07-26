@@ -5,12 +5,14 @@ date: 2026-07-26
 tags: [fsdp, distributed-training, pytorch]
 ---
 
-I failed the same quiz question twice while learning FSDP. Both times I made the same
-two mistakes: after the backward pass I said "all-reduce", and after the optimizer step
-I was sure the updated weights needed a broadcast. Both answers are correct for DDP.
-Both are wrong for FSDP, and figuring out why turned out to be the most useful thing
-I've picked up about distributed training so far. This post is the explanation I wish
-I'd read before failing that quiz.
+If you learned distributed training through DDP, you probably carry two instincts: after
+the backward pass, all-reduce the gradients; and if only one place has the freshest
+weights, broadcast them out. I carried both into FSDP and they cost me real confusion,
+because both are wrong there. Not slightly wrong, wrong in a way that means the mental
+model underneath is wrong. Working out why fixed my understanding of FSDP more than
+anything else, so this post is that explanation: what all-gather and reduce-scatter
+actually do, why reduce-scatter specifically is the right collective after backward, and
+why broadcast and all-reduce are answers to questions FSDP never asks.
 
 ## Two different worlds
 
@@ -24,9 +26,9 @@ copy of anything exists anywhere at rest. Full size tensors only show up as shor
 photocopies during compute, and then they get shredded.
 
 Once this picture is in your head, every "which collective goes here?" question answers
-itself. You just ask: in this world, who is allowed to permanently hold what? My two
-wrong quiz answers were both symptoms of the same bug: I was mentally living in DDP
-world, imagining full copies that need to be kept in sync, while writing FSDP code.
+itself. You just ask: in this world, who is allowed to permanently hold what? Both of
+the DDP instincts above are symptoms of the same bug: imagining full copies that need to
+be kept in sync, in a world that deliberately has none.
 
 ## All-gather: everyone shows their piece
 
@@ -50,14 +52,22 @@ repeated per layer.
 Notice the direction: each rank starts with 1/W of the data and ends with all of it.
 Small in, big out. And there's no arithmetic anywhere, it's pure assembly.
 
-## Reduce-scatter: average everything, take home only your slice
+## Why backward needs a different collective
 
-Here each rank contributes a full size tensor. The tensors get element wise averaged,
-and each rank receives only its own slice of the result.
+Here's the question that unlocked this for me: forward and backward both need
+communication, so why is forward an all-gather but backward a reduce-*scatter*? Where
+does the "reduce" suddenly come from?
 
-After backward, A and B each hold a full size gradient. Full size because the
-photocopied weights were full size and autograd doesn't know anything about sharding.
-The two gradients are different because each GPU trained on different data:
+Look at what's flowing in each direction.
+
+In forward, what flows is parameters. The shards are complementary pieces of one true
+weight. A's `[1, 2]` and B's `[3, 4]` don't disagree about anything; they're different
+chapters of the same book. Assembling them takes concatenation and nothing else. No
+arithmetic, so no reduce. All-gather.
+
+In backward, what flows is gradients, and the situation is completely different. Each
+GPU ran the same weights on different data, so each holds a full size gradient and the
+copies disagree:
 
 ```
 A's grad:  [8, 0, 4, 2]
@@ -65,14 +75,28 @@ B's grad:  [0, 4, 8, 6]
 average:   [4, 2, 6, 4]   <- computed in flight, never assembled on any GPU
 ```
 
-Reduce-scatter delivers `[4, 2]` to A and `[6, 4]` to B. Why only a slice? Because A
-will only ever update w1 and w2. Shipping it the averaged gradient for w3 and w4 would
-be spending network bandwidth on numbers it would immediately throw away.
+Disagreeing copies can't be concatenated, they have to be combined. That combining step
+is the "reduce". So the rule that generalizes: **reduce shows up exactly when the
+per-rank copies disagree and must be merged.** Parameters never disagree, there's one
+true weight living in pieces. Gradients always disagree, because the batches differ.
+That's the whole reason forward and backward use different collectives.
 
-This is the exact mirror of all-gather: big in, small out. It's also the only one of
-these collectives that does any math. A detail I got wrong once myself: the reduction
-is an average, not a sum. NCCL's `AVG` op folds the divide by W into the collective, so
-there's no separate division kernel.
+And the "scatter" half? After averaging, each rank only needs its own slice. A will only
+ever update w1 and w2, so shipping it the averaged gradient for w3 and w4 would be
+spending network bandwidth on numbers it throws away. Reduce-scatter does both at once:
+averages everyone's full gradients and delivers each custodian just its slice. A gets
+`[4, 2]`, B gets `[6, 4]`, and the full averaged gradient never exists on any single
+GPU.
+
+Direction-wise this is the exact mirror of all-gather: big in, small out. One detail
+worth knowing: the reduction is an average, not a sum, and NCCL's `AVG` op folds the
+divide by W into the collective itself, so there's no separate division kernel.
+
+A terminology note, since "scatter" and "sharding" sound interchangeable: sharding is a
+state, scatter is an action. Think of a card game. Dealing a card to each player is a
+scatter. Each player holding their own hand is being sharded. FSDP's weights *are*
+sharded (the standing layout); reduce-scatter is the verb that re-establishes that
+layout for gradients, with an average folded in.
 
 ## The identity that ties it together
 
@@ -89,14 +113,16 @@ needed anyway to build the photocopy.
 So FSDP is DDP's all-reduce sawed in half, with each half moved to where the data is
 actually needed. Nothing new gets invented. The pieces just run at different times.
 
-## Why not broadcast? (my failed quiz answer)
+## Why not broadcast?
 
-Broadcast means "one rank has the truth, copy it to everyone". It exists to fix stale
-copies. So count the copies. After the optimizer updates w3, how many permanent copies
-of w3 exist? Exactly one, on its custodian, freshly updated. There is nothing to be
-stale. The other ranks don't hold an outdated w3. They hold nothing at all, because
-their photocopy was shredded after backward. They'll get the fresh w3 automatically at
-the next forward's all-gather, straight from the one rank that owns it.
+Broadcast means "one rank has the truth, copy it to everyone". The DDP instinct says:
+the optimizer just updated the weights, other ranks need them, broadcast. But broadcast
+exists to fix stale copies, so count the copies. After the optimizer updates w3, how
+many permanent copies of w3 exist? Exactly one, on its custodian, freshly updated.
+There is nothing to be stale. The other ranks don't hold an outdated w3. They hold
+nothing at all, because their photocopy was shredded after backward. They'll get the
+fresh w3 automatically at the next forward's all-gather, straight from the one rank
+that owns it.
 
 Broadcast is DDP thinking. It assumes replicas that can drift apart. When there's one
 original per weight, staleness isn't a thing you have to prevent. It just can't happen.
@@ -129,6 +155,9 @@ I've slipped back into DDP world. In FSDP world:
 - permanent state is shards only: weights, grads, optimizer moments, all 1/W
 - full tensors are photocopies that live for one layer's compute
 - there's one original of every number, so "keeping copies in sync" isn't a concept
+
+And if the copies flowing through a collective disagree with each other, expect a
+reduce in its name. If they're complementary pieces of one thing, expect a gather.
 
 Everything else in FSDP, the CUDA streams, prefetching, `reshard_after_forward`,
 overlap, is engineering on top of one follow up question: the gathers cost time, can we
