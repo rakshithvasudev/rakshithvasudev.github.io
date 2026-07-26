@@ -207,9 +207,7 @@ ever update w1 and w2, so shipping it the averaged gradient for w3 and w4 would 
 spending network bandwidth on numbers it throws away. Reduce-scatter does both at once:
 averages everyone's full gradients and delivers each custodian just its slice. A gets
 `[4, 2]`, B gets `[6, 4]`, and the full averaged gradient never exists on any single
-GPU. That's a bandwidth win, not just a memory one: on a ring, reduce-scatter moves
-half the bytes of a full all-reduce. The other half of the traffic doesn't vanish, it
-becomes the parameter all-gather, deferred to the moment it's needed.
+GPU.
 
 Direction-wise this is the exact mirror of all-gather: big in, small out. One detail
 worth knowing: the reduction you want is an average, not a sum. For bf16 and fp32,
@@ -244,6 +242,12 @@ therefore needs the full averaged gradient. FSDP runs only the first half after
 backward. Each rank updates only its slice, so reduce-scatter is enough. The second
 half isn't skipped though. It moves to the next forward pass, where an all-gather was
 needed anyway to build the photocopy.
+
+The identity also prices things. The standard ring all-reduce is literally these two
+ops run back to back, so stopping at reduce-scatter moves half the bytes: FSDP's
+gradient sync costs half of DDP's all-reduce on the wire. The other half of the traffic
+comes back later as the parameter all-gather, paid at the moment it's useful. A
+bandwidth win as well as a memory one.
 
 So FSDP is DDP's all-reduce sawed in half, with each half moved to where the data is
 actually needed. Nothing new gets invented. The pieces just run at different times.
