@@ -20,8 +20,10 @@ every rank holds the complete tensor. **Reduce-scatter**: every rank contributes
 size tensor, the tensors get combined element wise (averaged, for our purposes), and
 each rank keeps only its own slice of the result. One assembles pieces, the other
 merges disagreeing copies and deals out the shares. That's the entire vocabulary of
-this post. Everything that follows is about why FSDP uses exactly these two, at the
-moments it does, and not the collectives you might reach for instead.
+this post (the formal definitions live in [NCCL's collective operations
+docs](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html)).
+Everything that follows is about why FSDP uses exactly these two, at the moments it
+does, and not the collectives you might reach for instead.
 
 Here's the same vocabulary as a picture. Two GPUs, four numbers, A responsible for the
 first half and B for the second. Notice the mirror: one op goes small in, big out; the
@@ -139,8 +141,10 @@ Notice the direction: each rank starts with 1/W of the data and ends with all of
 Small in, big out. And there's no arithmetic anywhere, it's pure assembly.
 
 I'll keep saying "layer" because it reads better, but strictly the unit is the FSDP
-communication group: whatever you wrapped in one `fully_shard()` call. Wrap per
-transformer block, the common setup, and "group" and "layer" mean the same thing.
+communication group: whatever you wrapped in one
+[`fully_shard()`](https://docs.pytorch.org/docs/stable/distributed.fsdp.fully_shard.html)
+call. Wrap per transformer block, the common setup, and "group" and "layer" mean the
+same thing.
 
 This is also where the OOM question from earlier gets its answer. The photocopies don't
 blow up memory because they never all exist at once: only the layer currently computing
@@ -197,7 +201,10 @@ worth knowing: the reduction you want is an average, not a sum. For bf16 and fp3
 NCCL's `AVG` op folds the divide by W into the collective itself, no separate division
 kernel. Other dtypes take slightly different routes (fp16 splits the divisor across pre
 and post scaling to avoid overflow), but every route ends the same place: each rank
-holds its shard of the averaged gradient.
+holds its shard of the averaged gradient. All of this is visible in [PyTorch's FSDP2
+collectives
+source](https://github.com/pytorch/pytorch/blob/v2.11.0/torch/distributed/fsdp/_fully_shard/_fsdp_collectives.py)
+if you want to see the machinery.
 
 A terminology note, since "scatter" and "sharding" sound interchangeable: sharding is a
 state, scatter is an action. Think of a card game. Dealing a card to each player is a
@@ -258,6 +265,61 @@ broadcast) or assume full replicas (broadcast, all-reduce). FSDP's world has nei
 Every rank is a custodian of equal standing, and there's exactly one original of
 everything.
 
+## Run it yourself
+
+Don't take my word for the numbers. This reproduces every value in this post with the
+[torch.distributed](https://docs.pytorch.org/docs/stable/distributed.html) API directly,
+no FSDP involved:
+
+```python
+import torch
+import torch.distributed as dist
+
+use_cuda = torch.cuda.is_available()
+dist.init_process_group("nccl" if use_cuda else "gloo")
+rank = dist.get_rank()
+if use_cuda:
+    torch.cuda.set_device(rank)
+dev = torch.device("cuda", rank) if use_cuda else torch.device("cpu")
+
+# all-gather: A contributes [1,2], B contributes [3,4]
+shard = torch.tensor([1.0, 2.0] if rank == 0 else [3.0, 4.0], device=dev)
+full = torch.empty(4, device=dev)
+dist.all_gather_into_tensor(full, shard)
+print(f"rank {rank} after all-gather:     {full.tolist()}")
+
+# reduce-scatter: A contributes [8,0,4,2], B contributes [0,4,8,6]
+grad = torch.tensor([8.0, 0.0, 4.0, 2.0] if rank == 0 else [0.0, 4.0, 8.0, 6.0], device=dev)
+mine = torch.empty(2, device=dev)
+if use_cuda:
+    dist.reduce_scatter_tensor(mine, grad, op=dist.ReduceOp.AVG)
+else:
+    dist.reduce_scatter_tensor(mine, grad, op=dist.ReduceOp.SUM)
+    mine /= dist.get_world_size()
+print(f"rank {rank} after reduce-scatter: {mine.tolist()}")
+
+dist.destroy_process_group()
+```
+
+Save it as `collectives_demo.py` and run:
+
+```
+torchrun --nproc_per_node=2 collectives_demo.py
+```
+
+Output:
+
+```
+rank 0 after all-gather:     [1.0, 2.0, 3.0, 4.0]
+rank 1 after all-gather:     [1.0, 2.0, 3.0, 4.0]
+rank 0 after reduce-scatter: [4.0, 2.0]
+rank 1 after reduce-scatter: [6.0, 4.0]
+```
+
+It runs on two GPUs over NCCL, or on plain CPU over gloo, and the fallback branch is a
+small lesson in itself: `ReduceOp.AVG` is NCCL only, so on CPU you sum and divide
+yourself. Verified on PyTorch 2.11.0.
+
 ## The check that fixed my mental model
 
 When I'm not sure which collective belongs somewhere, I stop and count who permanently
@@ -274,3 +336,21 @@ reduce in its name. If they're complementary pieces of one thing, expect a gathe
 Everything else in FSDP, the CUDA streams, prefetching, `reshard_after_forward`,
 overlap, is engineering on top of one follow up question: the gathers cost time, can we
 hide them behind compute? That's the next post, with real profiler traces.
+
+## References
+
+The mechanism claims in this post are checked against the PyTorch 2.11.0 source, and
+the memory numbers come from my own 8 GPU H100 runs (scripts will ship with the next
+post).
+
+- [ZeRO: Memory Optimizations Toward Training Trillion Parameter Models](https://arxiv.org/abs/1910.02054),
+  Rajbhandari et al. The paper that introduced sharding params, grads, and optimizer
+  state across data parallel ranks. FSDP is PyTorch's native take on this idea.
+- [PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel](https://arxiv.org/abs/2304.11277),
+  Zhao et al. The FSDP design paper.
+- [`fully_shard` documentation](https://docs.pytorch.org/docs/stable/distributed.fsdp.fully_shard.html),
+  the FSDP2 API this post describes.
+- [NCCL collective operations](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/collectives.html),
+  the formal definitions of all-gather, reduce-scatter, and friends.
+- [`_fsdp_collectives.py` at v2.11.0](https://github.com/pytorch/pytorch/blob/v2.11.0/torch/distributed/fsdp/_fully_shard/_fsdp_collectives.py),
+  where the all-gather and reduce-scatter described here are actually implemented.
