@@ -14,9 +14,18 @@ anything else, so this post is that explanation: what all-gather and reduce-scat
 actually do, why reduce-scatter specifically is the right collective after backward, and
 why broadcast and all-reduce are answers to questions FSDP never asks.
 
-One scope note before we start: everything below describes plain one dimensional full
-sharding, FSDP2's default. Hybrid sharding adds a replica dimension on top, and with it
-extra communication (including, yes, an all-reduce). That's a different post.
+Before the story starts, the two operations themselves, in plain terms, no FSDP
+attached. **All-gather**: every rank contributes its piece of a tensor, and afterwards
+every rank holds the complete tensor. **Reduce-scatter**: every rank contributes a full
+size tensor, the tensors get combined element wise (averaged, for our purposes), and
+each rank keeps only its own slice of the result. One assembles pieces, the other
+merges disagreeing copies and deals out the shares. That's the entire vocabulary of
+this post. Everything that follows is about why FSDP uses exactly these two, at the
+moments it does, and not the collectives you might reach for instead.
+
+One scope note as well: everything below describes plain one dimensional full sharding,
+FSDP2's default. Hybrid sharding adds a replica dimension on top, and with it extra
+communication (including, yes, an all-reduce). That's a different post.
 
 ## Two different worlds
 
