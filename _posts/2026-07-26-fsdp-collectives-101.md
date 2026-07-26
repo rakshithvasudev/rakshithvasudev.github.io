@@ -98,8 +98,19 @@ dashed cells hold nothing. The same numbers show up again below, when these two 
 to work inside FSDP.
 
 One scope note as well: everything below describes plain one dimensional full sharding,
-FSDP2's default. Hybrid sharding adds a replica dimension on top, and with it extra
-communication (including, yes, an all-reduce). That's a different post.
+FSDP2's default, written against PyTorch 2.11. Hybrid sharding adds a replica dimension
+on top, and with it extra communication (including, yes, an all-reduce). That's a
+different post. And the low level details, especially gradient scaling and how the
+collectives get scheduled, can shift between releases.
+
+If you only take three lines from this post:
+
+1. Parameter shards are complementary pieces of one true weight, so using them takes an
+   all-gather.
+2. Gradients are full size but different answers, computed from different data, so they
+   need averaging: a reduce.
+3. Each rank only updates its own slice, so reduce-scatter does the reduction and the
+   delivery in one op.
 
 ## Two different worlds
 
@@ -148,10 +159,11 @@ same thing.
 
 This is also where the OOM question from earlier gets its answer. The photocopies don't
 blow up memory because they never all exist at once: only the layer currently computing
-is unsharded (plus the next one, fetched early to hide latency). For a 5B model split
-into 24 blocks, that's roughly 0.4 GB of full bf16 weights alive at any moment, against
-about 10 GB if every block stayed gathered. So the memory spike scales with your
-largest block, not with the model. And "short lived" is literal: a block's photocopy
+is unsharded, plus the next one, fetched early to hide latency. For a 5B model split
+into 24 blocks, one block's full bf16 weights are about 0.4 GB, so with the prefetched
+block in flight call it under a gigabyte alive at any moment, against about 10 GB if
+every block stayed gathered. So the memory spike scales with your largest block or two,
+not with the model. And "short lived" is literal: a block's photocopy
 exists for the few milliseconds its compute takes, then the buffer is recycled for the
 next block. The fine print is that this guarantee comes from how you wrap. Call
 `fully_shard()` only on the root and there's one group, the whole model becomes one
