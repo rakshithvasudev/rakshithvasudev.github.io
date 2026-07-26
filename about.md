@@ -7,8 +7,9 @@ permalink: /about/
 I'm Rakshith Vasudev, an AI infra engineer at [Writer](https://writer.com), previously
 at Dell.
 
-This blog is where I write up what I'm learning about distributed training and GPU
-systems. The house rule: build a small version of the thing, measure the real one, and
-don't publish a claim without code or a trace behind it.
+I'm learning distributed training and GPU systems, and I'll try to blog as I learn.
+Nothing here is written from expertise; it's written on the way there. Posts are me
+working things out, so if something is wrong, or you see it differently, or you've hit
+the same confusion, I'd genuinely like to hear about it.
 
-Code and experiments live on [GitHub](https://github.com/rakshithvasudev).
+The best way to reach me is [GitHub](https://github.com/rakshithvasudev).
