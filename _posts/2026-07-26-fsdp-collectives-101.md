@@ -98,10 +98,10 @@ dashed cells hold nothing. The same numbers show up again below, when these two 
 to work inside FSDP.
 
 One scope note as well: everything below describes plain one dimensional full sharding,
-FSDP2's default, written against PyTorch 2.11. Hybrid sharding adds a replica dimension
-on top, and with it extra communication (including, yes, an all-reduce). That's a
-different post. And the low level details, especially gradient scaling and how the
-collectives get scheduled, can shift between releases.
+FSDP2's default, written against PyTorch 2.11; the low level details, especially
+gradient scaling and how the collectives get scheduled, can shift between releases.
+Hybrid sharding adds a replica dimension on top, and with it extra communication
+(including, yes, an all-reduce). That's a different post.
 
 If you only take three lines from this post:
 
@@ -225,7 +225,7 @@ scatter. Each player holding their own hand is being sharded. FSDP's weights *ar
 sharded (the standing layout); reduce-scatter is the verb that re-establishes that
 layout for gradients, with an average folded in.
 
-## The identity that ties it together
+## DDP's all-reduce, sawed in half
 
 There's a neat identity here: all-reduce = reduce-scatter + all-gather. "Everyone ends
 up with the full averaged tensor" breaks into "everyone gets their averaged slice"
