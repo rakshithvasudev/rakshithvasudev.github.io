@@ -14,6 +14,10 @@ anything else, so this post is that explanation: what all-gather and reduce-scat
 actually do, why reduce-scatter specifically is the right collective after backward, and
 why broadcast and all-reduce are answers to questions FSDP never asks.
 
+One scope note before we start: everything below describes plain one dimensional full
+sharding, FSDP2's default. Hybrid sharding adds a replica dimension on top, and with it
+extra communication (including, yes, an all-reduce). That's a different post.
+
 ## Two different worlds
 
 In DDP, every GPU permanently stores the entire model. 8 GPUs means 8 full copies that
@@ -52,22 +56,29 @@ repeated per layer.
 Notice the direction: each rank starts with 1/W of the data and ends with all of it.
 Small in, big out. And there's no arithmetic anywhere, it's pure assembly.
 
+I'll keep saying "layer" because it reads better, but strictly the unit is the FSDP
+communication group: whatever you wrapped in one `fully_shard()` call. Wrap per
+transformer block, the common setup, and "group" and "layer" mean the same thing.
+
 ## Why backward needs a different collective
 
-Here's the question that unlocked this for me: forward and backward both need
-communication, so why is forward an all-gather but backward a reduce-*scatter*? Where
-does the "reduce" suddenly come from?
+Here's the question that unlocked this for me. FSDP really has two communication jobs,
+attached to two different things. Parameters get all-gathered whenever compute needs
+them in full: before a layer's forward, and, because the photocopy gets shredded right
+after forward, usually again before that layer's backward. Gradients get
+reduce-scattered once backward has produced them. So the real split isn't "forward vs
+backward", it's parameters vs gradients: why do parameters gather while gradients
+reduce? Where does the "reduce" suddenly come from?
 
-Look at what's flowing in each direction.
+Look at what the ranks are holding in each case.
 
-In forward, what flows is parameters. The shards are complementary pieces of one true
-weight. A's `[1, 2]` and B's `[3, 4]` don't disagree about anything; they're different
-chapters of the same book. Assembling them takes concatenation and nothing else. No
-arithmetic, so no reduce. All-gather.
+When parameters move, the shards are complementary pieces of one true weight. A's
+`[1, 2]` and B's `[3, 4]` don't disagree about anything; they're different chapters of
+the same book. Assembling them takes concatenation and nothing else. No arithmetic, so
+no reduce. All-gather.
 
-In backward, what flows is gradients, and the situation is completely different. Each
-GPU ran the same weights on different data, so each holds a full size gradient and the
-copies disagree:
+When gradients move, the situation is completely different. Each GPU ran the same
+weights on different data, so each holds a full size gradient and the copies disagree:
 
 ```
 A's grad:  [8, 0, 4, 2]
@@ -78,8 +89,8 @@ average:   [4, 2, 6, 4]   <- computed in flight, never assembled on any GPU
 Disagreeing copies can't be concatenated, they have to be combined. That combining step
 is the "reduce". So the rule that generalizes: **reduce shows up exactly when the
 per-rank copies disagree and must be merged.** Parameters never disagree, there's one
-true weight living in pieces. Gradients always disagree, because the batches differ.
-That's the whole reason forward and backward use different collectives.
+true weight living in pieces. Gradients disagree in general, because each rank saw
+different data. That's the whole reason the two use different collectives.
 
 And the "scatter" half? After averaging, each rank only needs its own slice. A will only
 ever update w1 and w2, so shipping it the averaged gradient for w3 and w4 would be
@@ -89,8 +100,11 @@ averages everyone's full gradients and delivers each custodian just its slice. A
 GPU.
 
 Direction-wise this is the exact mirror of all-gather: big in, small out. One detail
-worth knowing: the reduction is an average, not a sum, and NCCL's `AVG` op folds the
-divide by W into the collective itself, so there's no separate division kernel.
+worth knowing: the reduction you want is an average, not a sum. For bf16 and fp32,
+NCCL's `AVG` op folds the divide by W into the collective itself, no separate division
+kernel. Other dtypes take slightly different routes (fp16 splits the divisor across pre
+and post scaling to avoid overflow), but every route ends the same place: each rank
+holds its shard of the averaged gradient.
 
 A terminology note, since "scatter" and "sharding" sound interchangeable: sharding is a
 state, scatter is an action. Think of a card game. Dealing a card to each player is a
@@ -112,6 +126,11 @@ needed anyway to build the photocopy.
 
 So FSDP is DDP's all-reduce sawed in half, with each half moved to where the data is
 actually needed. Nothing new gets invented. The pieces just run at different times.
+
+One precision for the careful reader: the second half doesn't carry the same tensor.
+The optimizer steps in between, so the later all-gather moves updated parameter shards,
+not the gradient shards that came out of reduce-scatter. The saw cuts the communication
+pattern in half, not one particular tensor.
 
 ## Why not broadcast?
 
