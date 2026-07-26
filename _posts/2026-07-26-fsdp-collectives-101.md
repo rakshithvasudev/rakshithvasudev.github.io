@@ -23,6 +23,78 @@ merges disagreeing copies and deals out the shares. That's the entire vocabulary
 this post. Everything that follows is about why FSDP uses exactly these two, at the
 moments it does, and not the collectives you might reach for instead.
 
+Here's the same vocabulary as a picture. Two GPUs, four numbers, A responsible for the
+first half and B for the second. Notice the mirror: one op goes small in, big out; the
+other goes big in, small out.
+
+<div style="text-align:center">
+<svg viewBox="0 0 680 290" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Diagram of all-gather and reduce-scatter with two GPUs">
+<rect x="14" y="6" width="316" height="276" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<rect x="354" y="6" width="316" height="276" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<text x="122" y="26" text-anchor="middle" font-size="14" font-weight="bold" fill="#3f7a3f">all-gather</text>
+<text x="462" y="26" text-anchor="middle" font-size="14" font-weight="bold" fill="#a05c1a">reduce-scatter</text>
+<text x="56" y="42" font-size="11" fill="#888">before</text>
+<text x="396" y="42" font-size="11" fill="#888">before</text>
+<text x="48" y="64" text-anchor="end" font-size="11.5" fill="#666">A</text>
+<rect x="56" y="46" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="71" y="64" text-anchor="middle" font-size="12.5" fill="#333">1</text>
+<rect x="89" y="46" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="104" y="64" text-anchor="middle" font-size="12.5" fill="#333">2</text>
+<rect x="122" y="46" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<rect x="155" y="46" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<text x="48" y="96" text-anchor="end" font-size="11.5" fill="#666">B</text>
+<rect x="56" y="78" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<rect x="89" y="78" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<rect x="122" y="78" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="137" y="96" text-anchor="middle" font-size="12.5" fill="#333">3</text>
+<rect x="155" y="78" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="170" y="96" text-anchor="middle" font-size="12.5" fill="#333">4</text>
+<line x1="122" y1="114" x2="122" y2="152" stroke="#4e8a4e" stroke-width="1.5"/>
+<polygon points="117,152 127,152 122,162" fill="#4e8a4e"/>
+<text x="132" y="140" font-size="12" fill="#3f7a3f" font-style="italic">all-gather</text>
+<text x="56" y="166" font-size="11" fill="#888">after</text>
+<text x="48" y="188" text-anchor="end" font-size="11.5" fill="#666">A</text>
+<rect x="56" y="170" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="71" y="188" text-anchor="middle" font-size="12.5" fill="#333">1</text>
+<rect x="89" y="170" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="104" y="188" text-anchor="middle" font-size="12.5" fill="#333">2</text>
+<rect x="122" y="170" width="30" height="26" fill="#d8ecd8" stroke="#9cc49c"/><text x="137" y="188" text-anchor="middle" font-size="12.5" fill="#333">3</text>
+<rect x="155" y="170" width="30" height="26" fill="#d8ecd8" stroke="#9cc49c"/><text x="170" y="188" text-anchor="middle" font-size="12.5" fill="#333">4</text>
+<text x="48" y="220" text-anchor="end" font-size="11.5" fill="#666">B</text>
+<rect x="56" y="202" width="30" height="26" fill="#d8ecd8" stroke="#9cc49c"/><text x="71" y="220" text-anchor="middle" font-size="12.5" fill="#333">1</text>
+<rect x="89" y="202" width="30" height="26" fill="#d8ecd8" stroke="#9cc49c"/><text x="104" y="220" text-anchor="middle" font-size="12.5" fill="#333">2</text>
+<rect x="122" y="202" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="137" y="220" text-anchor="middle" font-size="12.5" fill="#333">3</text>
+<rect x="155" y="202" width="30" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="170" y="220" text-anchor="middle" font-size="12.5" fill="#333">4</text>
+<text x="122" y="250" text-anchor="middle" font-size="12" fill="#555">small in, big out</text>
+<text x="122" y="266" text-anchor="middle" font-size="10.5" fill="#888">no math, pure assembly</text>
+<text x="388" y="64" text-anchor="end" font-size="11.5" fill="#666">A</text>
+<rect x="396" y="46" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="411" y="64" text-anchor="middle" font-size="12.5" fill="#333">8</text>
+<rect x="429" y="46" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="444" y="64" text-anchor="middle" font-size="12.5" fill="#333">0</text>
+<rect x="462" y="46" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="477" y="64" text-anchor="middle" font-size="12.5" fill="#333">4</text>
+<rect x="495" y="46" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="510" y="64" text-anchor="middle" font-size="12.5" fill="#333">2</text>
+<text x="388" y="96" text-anchor="end" font-size="11.5" fill="#666">B</text>
+<rect x="396" y="78" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="411" y="96" text-anchor="middle" font-size="12.5" fill="#333">0</text>
+<rect x="429" y="78" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="444" y="96" text-anchor="middle" font-size="12.5" fill="#333">4</text>
+<rect x="462" y="78" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="477" y="96" text-anchor="middle" font-size="12.5" fill="#333">8</text>
+<rect x="495" y="78" width="30" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="510" y="96" text-anchor="middle" font-size="12.5" fill="#333">6</text>
+<line x1="462" y1="114" x2="462" y2="152" stroke="#b06f2a" stroke-width="1.5"/>
+<polygon points="457,152 467,152 462,162" fill="#b06f2a"/>
+<text x="472" y="134" font-size="12" fill="#a05c1a" font-style="italic">reduce-scatter</text>
+<text x="472" y="150" font-size="10.5" fill="#888">avg = [4,2,6,4], in flight only</text>
+<text x="396" y="166" font-size="11" fill="#888">after</text>
+<text x="388" y="188" text-anchor="end" font-size="11.5" fill="#666">A</text>
+<rect x="396" y="170" width="30" height="26" fill="#e6a15c" stroke="#b06f2a"/><text x="411" y="188" text-anchor="middle" font-size="12.5" fill="#333">4</text>
+<rect x="429" y="170" width="30" height="26" fill="#e6a15c" stroke="#b06f2a"/><text x="444" y="188" text-anchor="middle" font-size="12.5" fill="#333">2</text>
+<rect x="462" y="170" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<rect x="495" y="170" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<text x="388" y="220" text-anchor="end" font-size="11.5" fill="#666">B</text>
+<rect x="396" y="202" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<rect x="429" y="202" width="30" height="26" fill="#fff" stroke="#c4c4c4" stroke-dasharray="3,3"/>
+<rect x="462" y="202" width="30" height="26" fill="#e6a15c" stroke="#b06f2a"/><text x="477" y="220" text-anchor="middle" font-size="12.5" fill="#333">6</text>
+<rect x="495" y="202" width="30" height="26" fill="#e6a15c" stroke="#b06f2a"/><text x="510" y="220" text-anchor="middle" font-size="12.5" fill="#333">4</text>
+<text x="462" y="250" text-anchor="middle" font-size="12" fill="#555">big in, small out</text>
+<text x="462" y="266" text-anchor="middle" font-size="10.5" fill="#888">merges disagreeing copies, deals out slices</text>
+</svg>
+</div>
+
+Solid cells are what a rank contributed, pale cells are what arrived over the wire, and
+dashed cells hold nothing. The same numbers show up again below, when these two ops go
+to work inside FSDP.
+
 One scope note as well: everything below describes plain one dimensional full sharding,
 FSDP2's default. Hybrid sharding adds a replica dimension on top, and with it extra
 communication (including, yes, an all-reduce). That's a different post.
