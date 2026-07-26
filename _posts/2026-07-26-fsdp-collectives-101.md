@@ -122,7 +122,8 @@ In FSDP, the model exists exactly once, chopped into W pieces. GPU k permanently
 piece k of every weight tensor, and of its gradient and optimizer state too. No full
 copy of anything exists anywhere at rest. Full size tensors only show up as short lived
 photocopies during compute, and then they get shredded. (If you're already asking "why
-doesn't gathering full tensors blow up memory?", good question, held for one section.)
+doesn't gathering full tensors blow up memory?", good question. Hold it until the next
+section.)
 
 Once this picture is in your head, every "which collective goes here?" question answers
 itself. You just ask: in this world, who is allowed to permanently hold what? Both of
