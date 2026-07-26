@@ -27,7 +27,8 @@ copies in sync.
 In FSDP, the model exists exactly once, chopped into W pieces. GPU k permanently owns
 piece k of every weight tensor, and of its gradient and optimizer state too. No full
 copy of anything exists anywhere at rest. Full size tensors only show up as short lived
-photocopies during compute, and then they get shredded.
+photocopies during compute, and then they get shredded. (If you're already asking "why
+doesn't gathering full tensors blow up memory?", good question, held for one section.)
 
 Once this picture is in your head, every "which collective goes here?" question answers
 itself. You just ask: in this world, who is allowed to permanently hold what? Both of
@@ -59,6 +60,17 @@ Small in, big out. And there's no arithmetic anywhere, it's pure assembly.
 I'll keep saying "layer" because it reads better, but strictly the unit is the FSDP
 communication group: whatever you wrapped in one `fully_shard()` call. Wrap per
 transformer block, the common setup, and "group" and "layer" mean the same thing.
+
+This is also where the OOM question from earlier gets its answer. The photocopies don't
+blow up memory because they never all exist at once: only the layer currently computing
+is unsharded (plus the next one, fetched early to hide latency). For a 5B model split
+into 24 blocks, that's roughly 0.4 GB of full bf16 weights alive at any moment, against
+about 10 GB if every block stayed gathered. So the memory spike scales with your
+largest block, not with the model. And "short lived" is literal: a block's photocopy
+exists for the few milliseconds its compute takes, then the buffer is recycled for the
+next block. The fine print is that this guarantee comes from how you wrap. Call
+`fully_shard()` only on the root and there's one group, the whole model becomes one
+giant photocopy, and that can absolutely OOM.
 
 ## Why backward needs a different collective
 
