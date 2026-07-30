@@ -209,8 +209,8 @@ averages everyone's full gradients and delivers each custodian just its slice. A
 `[4, 2]`, B gets `[6, 4]`, and the full averaged gradient never exists on any single
 GPU.
 
-Direction-wise this is the exact mirror of all-gather: big in, small out. One detail
-worth knowing: the reduction you want is an average, not a sum. For bf16 and fp32,
+Direction-wise this is the exact mirror of all-gather: big in, small out. And the
+reduction you want is an average, not a sum. For bf16 and fp32,
 NCCL's `AVG` op folds the divide by W into the collective itself, no separate division
 kernel. Other dtypes take slightly different routes (fp16 splits the divisor across pre
 and post scaling to avoid overflow), but every route ends the same place: each rank
@@ -219,8 +219,8 @@ collectives
 source](https://github.com/pytorch/pytorch/blob/v2.11.0/torch/distributed/fsdp/_fully_shard/_fsdp_collectives.py)
 if you want to see the machinery.
 
-One nuance that starts to matter at scale: NCCL's bf16 reduction also accumulates in
-bf16 along the way, which gets lossy as the world size grows. That's why FSDP2's mixed
+NCCL's bf16 reduction also accumulates in bf16 along the way, which starts to get
+lossy as the world size grows. That's why FSDP2's mixed
 precision policy lets you compute in bf16 but reduce in fp32 (`reduce_dtype`), trading
 twice the reduce-scatter bytes for numerical safety. That trade is a bandwidth story,
 and it belongs to the next post.
@@ -252,7 +252,7 @@ bandwidth win as well as a memory one.
 So FSDP is DDP's all-reduce sawed in half, with each half moved to where the data is
 actually needed. Nothing new gets invented. The pieces just run at different times.
 
-One precision for the careful reader: the second half doesn't carry the same tensor.
+To be precise, the second half doesn't carry the same tensor.
 The optimizer steps in between, so the later all-gather moves updated parameter shards,
 not the gradient shards that came out of reduce-scatter. The saw cuts the communication
 pattern in half, not one particular tensor.
