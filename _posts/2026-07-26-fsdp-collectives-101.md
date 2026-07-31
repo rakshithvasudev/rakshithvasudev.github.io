@@ -231,9 +231,9 @@ scatter. Each player holding their own hand is being sharded. FSDP's weights *ar
 sharded (the standing layout); reduce-scatter is the verb that re-establishes that
 layout for gradients, with an average folded in.
 
-## DDP's all-reduce, sawed in half
+## DDP's all-reduce, chopped in half
 
-There's a neat identity here: all-reduce = reduce-scatter + all-gather. "Everyone ends
+There's a connection here: all-reduce = reduce-scatter + all-gather. "Everyone ends
 up with the full averaged tensor" breaks into "everyone gets their averaged slice"
 followed by "everyone shows their slice".
 
@@ -243,19 +243,19 @@ backward. Each rank updates only its slice, so reduce-scatter is enough. The sec
 half isn't skipped though. It moves to the next forward pass, where an all-gather was
 needed anyway to build the photocopy.
 
-The identity also prices things. The standard ring all-reduce is literally these two
+That connection also prices things. The standard ring all-reduce is literally these two
 ops run back to back, so stopping at reduce-scatter moves half the bytes: FSDP's
 gradient sync costs half of DDP's all-reduce on the wire. The other half of the traffic
 comes back later as the parameter all-gather, paid at the moment it's useful. A
 bandwidth win as well as a memory one.
 
-So FSDP is DDP's all-reduce sawed in half, with each half moved to where the data is
+So FSDP is DDP's all-reduce chopped in half, with each half moved to where the data is
 actually needed. Nothing new gets invented. The pieces just run at different times.
 
 To be precise, the second half doesn't carry the same tensor.
 The optimizer steps in between, so the later all-gather moves updated parameter shards,
-not the gradient shards that came out of reduce-scatter. The saw cuts the communication
-pattern in half, not one particular tensor.
+not the gradient shards that came out of reduce-scatter. What gets chopped in half is
+the communication pattern, not one particular tensor.
 
 ## Why not broadcast?
 
