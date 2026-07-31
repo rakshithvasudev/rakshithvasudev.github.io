@@ -243,7 +243,7 @@ backward. Each rank updates only its slice, so reduce-scatter is enough. The sec
 half isn't skipped though. It moves to the next forward pass, where an all-gather was
 needed anyway to build the photocopy.
 
-That connection also prices things. The standard ring all-reduce is literally these two
+The same connection also tells you the cost. The standard ring all-reduce is literally these two
 ops run back to back, so stopping at reduce-scatter moves half the bytes: FSDP's
 gradient sync costs half of DDP's all-reduce on the wire. The other half of the traffic
 comes back later as the parameter all-gather, paid at the moment it's useful. A
