@@ -400,6 +400,7 @@ object (`cuMulticastCreate`, `src/transport/nvls.cc`) that every local GPU binds
 its buffer into, giving each GPU a second address for the same logical memory.
 Loads and stores through that address are special:
 
+{% raw %}
 ```c
 // src/device/reduce_kernel.h: the load returns the SUM across all GPUs
 multimem.ld_reduce.relaxed.sys.global.add.f32  %0, [%1];
@@ -407,6 +408,7 @@ multimem.ld_reduce.relaxed.sys.global.add.f32  %0, [%1];
 // src/device/op128.h: the store lands on EVERY GPU
 multimem.st.global.v4.f32  [%0], {%1,%2,%3,%4};
 ```
+{% endraw %}
 
 Read the whole all-reduce kernel loop for the registered-buffer case and it's
 almost nothing: each GPU walks its slice issuing `multimem.ld_reduce`, which asks
