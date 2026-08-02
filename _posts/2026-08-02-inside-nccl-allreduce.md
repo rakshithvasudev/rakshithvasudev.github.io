@@ -33,17 +33,37 @@ If you only take three lines from this post:
 3. On NVSwitch systems the winner is often neither: the switch reduces the data
    itself (NVLink SHARP), and across nodes the InfiniBand switches can too.
 
+## What all-reduce promises
+
+First, the contract, for anyone landing here without the last post. All-reduce
+takes one same-shaped tensor per rank, combines them element wise, and leaves
+every rank holding the identical combined result. The numbers from last time work
+just as well here:
+
+```
+before:  A: [8, 0, 4, 2]      B: [0, 4, 8, 6]
+all-reduce (sum) ------------------------------
+after:   A: [8, 4, 12, 8]     B: [8, 4, 12, 8]
+```
+
+(NCCL reduces with sum, prod, min, max, or avg; the average DDP wants is a sum
+with the divide folded into the final step, a trick called `postOp` that you'll
+see in the kernel below.) The decomposition from the last post is the
+load-bearing fact of this one: all-reduce = reduce-scatter + all-gather. First
+every rank ends up owning the finished sum of one slice, then the finished
+slices circulate until everyone has all of them. Hold onto that, because the
+ring is nothing but this decomposition made physical.
+
 ## The ring, exactly as the kernel runs it
 
 Start with the algorithm the last post promised. Every rank splits the buffer into
-`k` chunks, one per rank in the ring. The reduce-scatter half takes `k-1` steps: each
+`n` chunks, one per rank in the ring. The reduce-scatter half takes `n-1` steps: each
 step, every rank sends one chunk to its ring neighbor and receives a different chunk,
-adding what arrives into its own copy. After `k-1` hops a chunk has visited everyone
-and the rank holding it has the full sum. The all-gather half is another `k-1` steps
+adding what arrives into its own copy. After `n-1` hops a chunk has visited everyone
+and the rank holding it has the full sum. The all-gather half is another `n-1` steps
 of the same motion, except now the finished chunks circulate unchanged. Total:
-`2(k-1)` steps, and every link carries a different chunk on every step, which is why
-nothing idles and why the ring hits the bandwidth lower bound of `2(k-1)/k` of the
-buffer size sent per GPU.
+`2(n-1)` steps, and every link carries a different chunk on every step, so nothing
+idles.
 
 Here is one chunk's journey on four GPUs. All four chunks make this same trip
 simultaneously, one position apart, so this diagram is happening four times at once,
@@ -80,13 +100,117 @@ rotated:
 <line x1="595" y1="86" x2="595" y2="190" stroke="#4e8a4e" stroke-width="1.6"/><polygon points="591,190 595,198 599,190" fill="#4e8a4e"/>
 <text x="604" y="140" font-size="10.5" fill="#3f7a3f">sum</text>
 <text x="512" y="244" text-anchor="middle" font-size="10.5" fill="#3f7a3f">3 more hops, copying only</text>
-<text x="512" y="262" text-anchor="middle" font-size="10.5" fill="#888">2(k-1) = 6 steps total for k = 4</text>
+<text x="512" y="262" text-anchor="middle" font-size="10.5" fill="#888">2(n-1) = 6 steps total for n = 4</text>
 </svg>
 </div>
 
 The orange and green are deliberate: they're the same colors the last post used for
 reduce-scatter and all-gather, because the ring all-reduce literally is those two
 collectives fused.
+
+The one-chunk view shows the journey; it hides the schedule. To see where `2(n-1)`
+actually comes from, watch every buffer of every GPU at once. Three GPUs keep it
+readable: call GPU i's contributions to the three chunks `ai`, `bi`, `ci`, and
+watch four steps do the whole job:
+
+<div style="text-align:center">
+<svg viewBox="0 0 680 302" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Full state evolution of a 3-GPU ring all-reduce over 4 steps: two reduce-scatter steps complete each chunk's sum, two all-gather steps distribute them">
+<rect x="14" y="6" width="652" height="290" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<text x="171" y="32" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#555">GPU 0</text>
+<text x="367" y="32" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#555">GPU 1</text>
+<text x="563" y="32" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#555">GPU 2</text>
+<!-- t0 -->
+<text x="76" y="59" text-anchor="end" font-size="11" fill="#666">start</text>
+<g font-size="11">
+<rect x="84" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="112" y="59" text-anchor="middle" fill="#333">a0</text>
+<rect x="143" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="171" y="59" text-anchor="middle" fill="#333">b0</text>
+<rect x="202" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="230" y="59" text-anchor="middle" fill="#333">c0</text>
+<rect x="280" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="308" y="59" text-anchor="middle" fill="#333">a1</text>
+<rect x="339" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="367" y="59" text-anchor="middle" fill="#333">b1</text>
+<rect x="398" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="426" y="59" text-anchor="middle" fill="#333">c1</text>
+<rect x="476" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="504" y="59" text-anchor="middle" fill="#333">a2</text>
+<rect x="535" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="563" y="59" text-anchor="middle" fill="#333">b2</text>
+<rect x="594" y="42" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="622" y="59" text-anchor="middle" fill="#333">c2</text>
+</g>
+<text x="340" y="86" text-anchor="middle" font-size="10.5" font-style="italic" fill="#a05c1a">reduce-scatter: each GPU sends one chunk right, adds what arrives</text>
+<!-- t1 -->
+<text x="76" y="111" text-anchor="end" font-size="11" fill="#666">t1</text>
+<g font-size="10.5">
+<rect x="84" y="94" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="112" y="111" text-anchor="middle" fill="#333">a0</text>
+<rect x="143" y="94" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="171" y="111" text-anchor="middle" fill="#333">b0+b2</text>
+<rect x="202" y="94" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="230" y="111" text-anchor="middle" fill="#333">c0</text>
+<rect x="280" y="94" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="308" y="111" text-anchor="middle" fill="#333">a1</text>
+<rect x="339" y="94" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="367" y="111" text-anchor="middle" fill="#333">b1</text>
+<rect x="398" y="94" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="426" y="111" text-anchor="middle" fill="#333">c0+c1</text>
+<rect x="476" y="94" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="504" y="111" text-anchor="middle" fill="#333">a1+a2</text>
+<rect x="535" y="94" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="563" y="111" text-anchor="middle" fill="#333">b2</text>
+<rect x="594" y="94" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="622" y="111" text-anchor="middle" fill="#333">c2</text>
+</g>
+<!-- t2 -->
+<text x="76" y="141" text-anchor="end" font-size="11" fill="#666">t2</text>
+<g font-size="10.5">
+<rect x="84" y="124" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="112" y="141" text-anchor="middle" fill="#333">Σa</text>
+<rect x="143" y="124" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="171" y="141" text-anchor="middle" fill="#333">b0+b2</text>
+<rect x="202" y="124" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="230" y="141" text-anchor="middle" fill="#333">c0</text>
+<rect x="280" y="124" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="308" y="141" text-anchor="middle" fill="#333">a1</text>
+<rect x="339" y="124" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="367" y="141" text-anchor="middle" fill="#333">Σb</text>
+<rect x="398" y="124" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="426" y="141" text-anchor="middle" fill="#333">c0+c1</text>
+<rect x="476" y="124" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="504" y="141" text-anchor="middle" fill="#333">a1+a2</text>
+<rect x="535" y="124" width="56" height="26" fill="#fff" stroke="#c4c4c4"/><text x="563" y="141" text-anchor="middle" fill="#333">b2</text>
+<rect x="594" y="124" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="622" y="141" text-anchor="middle" fill="#333">Σc</text>
+</g>
+<text x="340" y="168" text-anchor="middle" font-size="10.5" font-style="italic" fill="#3f7a3f">all-gather: forward the finished chunks around the same ring</text>
+<!-- t3 -->
+<text x="76" y="193" text-anchor="end" font-size="11" fill="#666">t3</text>
+<g font-size="10.5">
+<rect x="84" y="176" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="112" y="193" text-anchor="middle" fill="#333">Σa</text>
+<rect x="143" y="176" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="171" y="193" text-anchor="middle" fill="#333">b0+b2</text>
+<rect x="202" y="176" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="230" y="193" text-anchor="middle" fill="#333">Σc</text>
+<rect x="280" y="176" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="308" y="193" text-anchor="middle" fill="#333">Σa</text>
+<rect x="339" y="176" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="367" y="193" text-anchor="middle" fill="#333">Σb</text>
+<rect x="398" y="176" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="426" y="193" text-anchor="middle" fill="#333">c0+c1</text>
+<rect x="476" y="176" width="56" height="26" fill="#f6dfc4" stroke="#d9ae7a"/><text x="504" y="193" text-anchor="middle" fill="#333">a1+a2</text>
+<rect x="535" y="176" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="563" y="193" text-anchor="middle" fill="#333">Σb</text>
+<rect x="594" y="176" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="622" y="193" text-anchor="middle" fill="#333">Σc</text>
+</g>
+<!-- t4 -->
+<text x="76" y="223" text-anchor="end" font-size="11" fill="#666">t4</text>
+<g font-size="10.5">
+<rect x="84" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="112" y="223" text-anchor="middle" fill="#333">Σa</text>
+<rect x="143" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="171" y="223" text-anchor="middle" fill="#333">Σb</text>
+<rect x="202" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="230" y="223" text-anchor="middle" fill="#333">Σc</text>
+<rect x="280" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="308" y="223" text-anchor="middle" fill="#333">Σa</text>
+<rect x="339" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="367" y="223" text-anchor="middle" fill="#333">Σb</text>
+<rect x="398" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="426" y="223" text-anchor="middle" fill="#333">Σc</text>
+<rect x="476" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="504" y="223" text-anchor="middle" fill="#333">Σa</text>
+<rect x="535" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="563" y="223" text-anchor="middle" fill="#333">Σb</text>
+<rect x="594" y="206" width="56" height="26" fill="#7fb97f" stroke="#4e8a4e"/><text x="622" y="223" text-anchor="middle" fill="#333">Σc</text>
+</g>
+<g font-size="10.5">
+<rect x="120" y="246" width="14" height="14" fill="#fff" stroke="#c4c4c4"/><text x="141" y="257" fill="#666">one rank's piece</text>
+<rect x="280" y="246" width="14" height="14" fill="#f6dfc4" stroke="#d9ae7a"/><text x="301" y="257" fill="#666">partial sum</text>
+<rect x="420" y="246" width="14" height="14" fill="#7fb97f" stroke="#4e8a4e"/><text x="441" y="257" fill="#666">finished sum Σ</text>
+</g>
+<text x="340" y="284" text-anchor="middle" font-size="10.5" fill="#888">each chunk takes n-1 = 2 hops to finish and n-1 = 2 more to reach everyone: 2(n-1) = 4 steps</text>
+</svg>
+</div>
+
+Now the number falls out of two counts. A chunk's full sum has `n` contributions
+sitting on `n` different GPUs, and under the ring's discipline (only talk to your
+neighbor) each hop merges exactly one more GPU into the running total, so a chunk
+takes `n-1` hops to finish. The moment it finishes it exists on exactly one GPU,
+and the other `n-1` GPUs still need it, so it takes `n-1` more forwards to
+deliver. That's `2(n-1)`, and the ring's real trick is visible in the diagram: all
+`n` chunks run through that pipeline simultaneously, one position out of phase, so
+every link is busy every step and no step is wasted on data anyone already has.
+
+To be clear about what's optimal here: the step count isn't. A tree can finish a
+sum in logarithmic depth, and that's the entire next act of this post. The bytes
+are what's optimal: every hop carries fresh, never-repeated data, so each GPU
+sends `(2(n-1)/n) * S` total for an `S`-byte buffer, a hair under `2S`, which is
+the proven floor for any all-reduce however clever. Latency linear, bandwidth
+optimal. Keep that trade in your head; the rest of this post is NCCL renegotiating
+it from every direction.
 
 And it really is fused, not two calls. The whole thing is one loop in the device
 kernel, `runRing` in `src/device/all_reduce.h:14`. Trimmed to its skeleton:
@@ -138,6 +262,100 @@ rarely matches rank order.
 This matters for reading the rest of the post: when the cost model says "tree gets
 half the bandwidth", the mechanism is channels. Odd work goes to one structure,
 even work to another, and the two run concurrently on different SMs.
+
+## Why a 10 GB all-reduce doesn't OOM
+
+The last post spent a section on why FSDP's photocopies don't blow up memory. The
+same worry transfers here, sharpened. Eight ranks all-reduce a 10 GB gradient, so
+over the course of the collective each GPU receives many gigabytes of other GPUs'
+partial sums. Where does all of that land? If your instinct says "some staging
+buffer proportional to the message", all-reduce should be scary. It isn't, and the
+reason is worth having precisely, because it's the same streaming discipline every
+algorithm in this post shares.
+
+First, nothing proportional to the message is ever allocated, because arriving
+data is consumed the moment it lands. Look at the ring loop again: the workhorse
+step is `recvReduceSend`. A slice arrives in a FIFO slot, gets added to the local
+values in registers on its way through the SM, and the result leaves out the send
+side. The partial sum is never stored anywhere except in flight; the only
+long-lived bytes are the finished chunks, and those land in your own output
+tensor, which you already allocated. (For the usual PyTorch gradient all-reduce,
+`sendbuff == recvbuff`: the whole operation is in place, and NCCL supports that
+explicitly.)
+
+Second, the staging that does exist is fixed size and allocated exactly once. The
+FIFO between two ring neighbors is the per-connection buffer from earlier: 4 MiB
+for Simple, 512 KiB for LL, 4.6875 MiB for LL128 (`src/init.cc:810`), each carved
+into `NCCL_STEPS = 8` slots. These are allocated when the communicator is created
+(that memory bump you see at `init_process_group` time is exactly this, plus
+peers and channels), and then reused for every collective for the life of the
+communicator. A 4 KB all-reduce and a 10 GB all-reduce flow through the same
+slots.
+
+Third, backpressure. The sender is allowed to run at most 8 slots ahead of the
+receiver: `waitPeer` (`src/device/prims_simple.h:100`) spins until the receiver's
+head counter says a slot has been drained before writing another. So the bytes in
+flight per connection are capped at the buffer size no matter how mismatched the
+two GPUs' progress is. The tensor streams through a fixed window, like a river
+through a lock:
+
+<div style="text-align:center">
+<svg viewBox="0 0 680 240" width="100%" style="max-width:680px;height:auto" role="img" aria-label="A large tensor streaming through a fixed 8-slot FIFO between two GPUs, with head and tail pointers providing backpressure">
+<rect x="14" y="6" width="652" height="222" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<text x="85" y="32" text-anchor="middle" font-size="11.5" fill="#555">your tensor</text>
+<g>
+<rect x="50" y="40" width="70" height="17" fill="#eee" stroke="#ccc"/>
+<rect x="50" y="57" width="70" height="17" fill="#eee" stroke="#ccc"/>
+<rect x="50" y="74" width="70" height="17" fill="#eee" stroke="#ccc"/>
+<rect x="50" y="91" width="70" height="17" fill="#f6dfc4" stroke="#d9ae7a"/>
+<rect x="50" y="108" width="70" height="17" fill="#fff" stroke="#ccc"/>
+<rect x="50" y="125" width="70" height="17" fill="#fff" stroke="#ccc"/>
+<rect x="50" y="142" width="70" height="17" fill="#fff" stroke="#ccc"/>
+<rect x="50" y="159" width="70" height="17" fill="#fff" stroke="#ccc"/>
+</g>
+<text x="85" y="192" text-anchor="middle" font-size="10.5" fill="#888">any size at all</text>
+<line x1="126" y1="100" x2="200" y2="110" stroke="#b06f2a" stroke-width="1.6"/><polygon points="200,106 208,111 199,114" fill="#b06f2a"/>
+<text x="368" y="78" text-anchor="middle" font-size="11" fill="#555">8 fixed slots of 512 KiB, allocated once at init</text>
+<g>
+<rect x="210" y="92" width="36" height="30" fill="#fff" stroke="#c4c4c4"/>
+<rect x="250" y="92" width="36" height="30" fill="#f6dfc4" stroke="#d9ae7a"/>
+<rect x="290" y="92" width="36" height="30" fill="#f6dfc4" stroke="#d9ae7a"/>
+<rect x="330" y="92" width="36" height="30" fill="#f6dfc4" stroke="#d9ae7a"/>
+<rect x="370" y="92" width="36" height="30" fill="#fff" stroke="#c4c4c4"/>
+<rect x="410" y="92" width="36" height="30" fill="#fff" stroke="#c4c4c4"/>
+<rect x="450" y="92" width="36" height="30" fill="#fff" stroke="#c4c4c4"/>
+<rect x="490" y="92" width="36" height="30" fill="#fff" stroke="#c4c4c4"/>
+</g>
+<polygon points="264,132 272,132 268,125" fill="#4e8a4e"/>
+<text x="268" y="147" text-anchor="middle" font-size="10" fill="#3f7a3f">head: receiver drains</text>
+<polygon points="344,132 352,132 348,125" fill="#b06f2a"/>
+<text x="358" y="161" text-anchor="middle" font-size="10" fill="#a05c1a">tail: sender fills, blocks when 8 ahead</text>
+<line x1="530" y1="110" x2="566" y2="102" stroke="#4e8a4e" stroke-width="1.6"/><polygon points="565,98 574,101 566,106" fill="#4e8a4e"/>
+<text x="615" y="32" text-anchor="middle" font-size="11.5" fill="#555">peer's tensor</text>
+<g>
+<rect x="580" y="40" width="70" height="17" fill="#7fb97f" stroke="#4e8a4e"/>
+<rect x="580" y="57" width="70" height="17" fill="#7fb97f" stroke="#4e8a4e"/>
+<rect x="580" y="74" width="70" height="17" fill="#7fb97f" stroke="#4e8a4e"/>
+<rect x="580" y="91" width="70" height="17" fill="#fff" stroke="#ccc"/>
+<rect x="580" y="108" width="70" height="17" fill="#fff" stroke="#ccc"/>
+<rect x="580" y="125" width="70" height="17" fill="#fff" stroke="#ccc"/>
+<rect x="580" y="142" width="70" height="17" fill="#fff" stroke="#ccc"/>
+<rect x="580" y="159" width="70" height="17" fill="#fff" stroke="#ccc"/>
+</g>
+<text x="615" y="192" text-anchor="middle" font-size="10.5" fill="#888">reduced in place</text>
+<text x="340" y="214" text-anchor="middle" font-size="10.5" fill="#888">in-flight staging per connection stays constant no matter how big the tensor is</text>
+</svg>
+</div>
+
+Add it up and the total staging per rank is channels times connections times
+roughly 9 MiB (the three protocol buffers together, carved out per connection in
+`src/transport/p2p.cc:488`). Order of 100 to 300 MiB for a typical communicator,
+fixed at init, flat forever after. That's why NCCL's memory footprint shows up
+when you create the communicator and then never moves during training, and why
+"how big is the tensor" never appears in the memory story at all. The
+registered-buffer paths later in this post (NVLS user-buffer registration and the
+network's direct modes) push this to its logical end: even the fixed staging copy
+disappears, and the hardware reads your tensors where they sit.
 
 ## Where the ring hurts
 
