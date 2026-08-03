@@ -704,44 +704,68 @@ Tree, CollNetDirect, CollNetChain, NVLS, and NVLSTree
 (`src/device/generate.py:87`), and every entry is just a different answer to "who
 does the adds, and who moves the bytes".
 
-## What about EFA, where no switch does math?
+## What your hardware takes off the menu
 
-A fair objection at this point: most large training runs aren't on SuperPODs
-with SHARP-capable InfiniBand. A huge share of them are on AWS, and EFA's
-switches do not do math. NCCL talks to EFA through a network plugin
-([aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl), libfabric underneath), and
-that plugin implements the point-to-point network API only; there is no CollNet
-backend for EFA. So what happens to the menu?
+Everything above described the full menu, and if you're on older or plainer
+hardware you may reasonably ask which parts still apply to you. The answer has a
+clean shape, because every algorithm row and protocol column is really a bet on
+one specific hardware capability, and the machinery for missing capabilities is
+the one you've already seen: the row's bandwidth entry reads zero, and the
+argmin simply never considers it. There is no "cloud mode" or "legacy mode"
+anywhere in NCCL; there are only capabilities present or absent.
 
-Exactly what the gating code says happens (`src/graph/tuning.cc:504`). With no
-CollNet, the CollNetDirect and CollNetChain rows are disabled outright, and
-multi-node NVLS goes with them, because multi-node NVLS is NVLS inside the node
-plus SHARP between nodes. What survives for multi-node jobs is Ring, Tree, and
-the quiet star of EFA clusters, NVLS_TREE: NVLink SHARP inside each node (a
-p5's eight H100s sit on third-generation NVSwitch, rented or not, so the switch
-math from the last section still happens) stitched to the double binary tree
-over EFA between nodes. Nothing in this post stops applying on AWS; only the
-inter-node offload column disappears, and the in-node offload keeps working.
+The bets, one per row:
 
-Two EFA-specific footnotes that bite in practice. First, protocols. LL128's
-entire trick assumes the fabric delivers 128-byte aligned writes atomically and
-in order. InfiniBand promises that. EFA's SRD transport delivers out of order by
-design, so for years the AWS plugin protected you by exporting
-`NCCL_PROTO=simple`, which zeroes the LL and LL128 rows through the same enable
-mask as every other exclusion in this post. On p5-class instances with a recent
-plugin and libfabric, EFA can promise in-order 128-byte aligned writes and the
-plugin stopped disabling the fast protocols. Which world you're in is visible in
-the TUNING dump below. Second, latency. EFA's per-message latency is higher than
-InfiniBand's, and it enters the model as the NIC latency added to every
-inter-node hop (`graphs->latencyInter`, `src/graph/tuning.cc:389`). A higher
-network alpha stretches every term with `interLat` in it, and since ring pays
-that term `2(nNodes-1)` times against the tree's `2·log2(nNodes)`, the practical
-effect is that tree stays the right answer to larger message sizes on EFA than
-it does on InfiniBand.
+| menu entry | the capability it bets on | without it |
+|---|---|---|
+| Ring, Tree | any link that moves bytes | always available |
+| LL | nothing extra (flags ride inside the data) | always available |
+| LL128 | 128-byte writes land whole and in order | row zeroed |
+| NVLS, NVLS_TREE | a switch with reduction hardware inside the node | rows zeroed |
+| CollNetDirect/Chain | a network whose switches reduce, plus its plugin | rows zeroed |
 
-The sentence to keep: the cost model has no special case for EFA. The fabric
-just zeroes some rows and raises some constants, and the same argmin over
-whatever is left explains everything the log shows you.
+Now walk the generations with that table in hand. A PCIe-only server, no
+NVLink, is the floor: ring and tree over PCIe with LL and Simple, and that's the
+whole menu, because LL128 demands NVLink-grade write atomicity even inside the
+node (the gate is `graphs->typeIntra <= PATH_NVB`, `src/graph/tuning.cc:531`).
+A V100 or A100 box with NVLink and an earlier NVSwitch gets LL128 back and full
+ring/tree bandwidth, but no switch arithmetic: those switch generations forward
+bytes and do no math, and the code encodes that bluntly, an efficiency table
+with literal zeros for Volta and Ampere (`nvlsEfficiency`,
+`src/graph/tuning.cc:139`). Everything in this post up through the cost model
+applies to these machines unchanged; the offload sections just aren't about
+them. Reduction-capable switches inside the node arrived with Hopper, and only
+then does the NVLS row light up.
+
+Between nodes the same logic repeats one level out. Plain Ethernet, RoCE, or
+InfiniBand without SHARP configured moves bytes and does no math, so the
+CollNet rows and multi-node NVLS are zeroed (`src/graph/tuning.cc:504`), and
+inter-node all-reduce is rings and double binary trees, exactly the two
+algorithms this post spent most of its length on. That is the common case in
+most datacenters, not the exception. If the nodes themselves have
+reduction-capable switches, NVLS_TREE survives as the hybrid: switch math
+inside the node, ordinary tree traffic between nodes, no cooperation needed
+from the network at all.
+
+Cloud fabrics slot into the same table rather than getting special treatment.
+AWS's EFA, to take the biggest one, has no in-network reduction and no CollNet
+plugin, so it's the "moves bytes, does no math" row above. Its one extra wrinkle
+is the LL128 bet: EFA's transport delivers out of order by design, so the
+[plugin](https://github.com/aws/aws-ofi-nccl) historically exported
+`NCCL_PROTO=simple` to protect you, zeroing the fast-protocol rows through the
+same mask as everything else; on current instance generations it can promise
+in-order 128-byte writes and stopped doing so. And because such fabrics
+typically carry a higher per-message latency than InfiniBand, which enters the
+model through the NIC latency added to every inter-node hop
+(`graphs->latencyInter`, `src/graph/tuning.cc:389`), the ring's
+`2(nNodes-1)` inter-node hops hurt more against the tree's `2·log2(nNodes)`,
+and the tree stays the right answer out to larger sizes than it would on a
+lower-latency fabric.
+
+The sentence to keep from this section: the cost model has no idea what brand
+anything is. Hardware zeroes some rows and sets some constants, and the same
+argmin over whatever remains explains everything the log shows you, on a
+PCIe box from 2018 or on whatever ships next year.
 
 ## Watch it decide
 
