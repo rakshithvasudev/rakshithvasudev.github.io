@@ -58,8 +58,8 @@ with the divide folded into the final step, a trick called `postOp` that you'll
 see in the kernel below.) One fact from the last post carries most of
 this one: all-reduce = reduce-scatter + all-gather. First
 every rank ends up owning the finished sum of one slice, then the finished
-slices circulate until everyone has all of them. Hold onto that, because the
-ring is nothing but this decomposition made physical.
+slices circulate until everyone has all of them. Keep that split in mind: the
+ring is exactly those two steps, run over real wires.
 
 ## The ring, exactly as the kernel runs it
 
