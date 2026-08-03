@@ -55,8 +55,8 @@ after:   A: [8, 4, 12, 8]     B: [8, 4, 12, 8]
 
 (NCCL reduces with sum, prod, min, max, or avg; the average DDP wants is a sum
 with the divide folded into the final step, a trick called `postOp` that you'll
-see in the kernel below.) The decomposition from the last post is the
-load-bearing fact of this one: all-reduce = reduce-scatter + all-gather. First
+see in the kernel below.) One fact from the last post carries most of
+this one: all-reduce = reduce-scatter + all-gather. First
 every rank ends up owning the finished sum of one slice, then the finished
 slices circulate until everyone has all of them. Hold onto that, because the
 ring is nothing but this decomposition made physical.
