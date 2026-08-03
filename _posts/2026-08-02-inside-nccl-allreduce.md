@@ -820,11 +820,13 @@ anything is. Hardware zeroes some rows and sets some constants, and the same
 argmin over whatever remains explains everything the log shows you, on a
 PCIe box from 2018 or on whatever ships next year.
 
-## Does any of this survive ten thousand GPUs?
+## How this survives ten thousand GPUs
 
 Everything above was reasoned at whiteboard scale, three GPUs here, a node
-there. A fair question is whether the story holds when the numbers get silly,
-and this is where the published record earns its place in the post.
+there. That NCCL runs at the other end of the scale isn't in question; it's
+the library the largest training runs in the world already sit on. The
+question worth asking is which of these mechanisms carries the load out
+there, and what had to bend. The published record answers that specifically.
 
 The double binary tree shipped with measurements. When NVIDIA introduced it in
 NCCL 2.4, they benchmarked all-reduce on the Summit supercomputer at up to
