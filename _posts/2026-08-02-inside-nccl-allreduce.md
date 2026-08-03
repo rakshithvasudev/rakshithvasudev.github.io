@@ -891,7 +891,7 @@ and tensor parallelism still run on the reduce-scatter, all-gather, and
 all-reduce described here.
 
 And when you want measured curves instead of my sketches,
-["Demystifying NCCL"](https://arxiv.org/abs/2507.04786) (2025) benchmarks all
+["Demystifying NCCL"](https://arxiv.org/abs/2507.04786) (2025, revised 2026) benchmarks all
 three protocols and both algorithms across message sizes and cluster sizes
 and maps where each one wins: LL and LL128 small, Simple large, trees pulling
 ahead as node counts grow. It's against NCCL 2.19, but it's the same
