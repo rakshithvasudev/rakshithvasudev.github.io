@@ -825,79 +825,81 @@ PCIe box from 2018 or on whatever ships next year.
 Everything above was reasoned at whiteboard scale, three GPUs here, a node
 there. That NCCL runs at the other end of the scale isn't in question; it's
 the library the largest training runs in the world already sit on. The
-question worth asking is which of these mechanisms carries the load out
-there, and what had to bend. The published record answers that specifically.
+question worth asking is which of these mechanisms carries the load out there,
+and what had to bend. The published record traces a clean progression: scale
+first changes what the workload looks like, then forces the defaults to be
+retuned, and eventually pushes teams to redesign their algorithms around the
+collectives themselves. Each step is visible in a paper you can read.
 
-Start with what scale does to the work itself, because it explains which
-mechanism ends up carrying it. The ring's chunks are `S/n`, so a 1 GiB gradient
-bucket that feels enormous is, across 16,384 ranks, a 64 KiB chunk per rank,
-sitting exactly in the mid-size band where the latency term and the tree
-correction factor live. At frontier scale, "large message" quietly stops
-existing from any single rank's point of view. So the machinery that carries
-the biggest jobs is the latency-oriented machinery from this post, trees, LL
-and LL128, switch offload, and the bandwidth-oriented ring recedes toward the
-few collectives that stay genuinely huge per rank.
+The workload changes first, by arithmetic alone. The ring's chunks are `S/n`,
+so a 1 GiB gradient bucket that feels enormous is, across 16,384 ranks, a
+64 KiB chunk per rank, sitting exactly in the mid-size band where the latency
+term and the tree correction factor live. At frontier scale, "large message"
+quietly stops existing from any single rank's point of view. The machinery
+that carries the biggest jobs is therefore the latency-oriented machinery from
+this post, trees, LL and LL128, switch offload, while the bandwidth-oriented
+ring recedes toward the few collectives that stay genuinely huge per rank.
 
-The tree carrying that load is why it exists at all. NVIDIA built the double
-binary tree for exactly this regime and shipped it with measurements
+That shift is the reason the double binary tree exists at all, and it shipped
+with measurements
 ([the NCCL 2.4 announcement](https://developer.nvidia.com/blog/massively-scale-deep-learning-training-nccl-2-4/),
 latency plot in figure 3): on the Summit supercomputer at up to 24,576 GPUs,
 small-message all-reduce latency improved over rings by up to 180x at the top
-end. The size of that number is
-the section on hop counts doing its job at scale: 24k GPUs is about 4,096
-nodes, so a ring serializes around 8,000 network hops where the tree needs
-about 24. And the same post records what bent: the double tree held full
+end. The size of that number is the hop-count arithmetic from the cost model
+section at full size: 24k GPUs is about 4,096 nodes, so a ring serializes
+around 8,000 network hops where the tree needs about 24. The same
+announcement also records the first thing that bent: the tree held full
 bandwidth on Summit except when traffic crossed the InfiniBand fabric's top
 switch layer. Even the algorithm built for scale pays the topology tax this
 post keeps running into.
 
-What bends at industrial scale is the tuning, not the design.
+The next thing to bend is the tuning, once a real cluster meets the defaults.
 [Llama 3](https://arxiv.org/abs/2407.21783)'s 405B model trained on up to
 16,000 H100s in a 24,000-GPU cluster wired as a three-layer Ethernet Clos
-fabric with RoCE, which per the capability ladder
-above means switches that move bytes and do no math: ring and tree territory.
-Stock constants weren't enough at that size, and the adjustments Meta describes
-making in NCCLX, their NCCL fork, are the knobs from earlier sections turned by
-hand: they "tuned chunking and data transfer to fit network latencies" (the
-chunk and FIFO sizing from the memory section) and gave small control messages
+fabric with RoCE, which per the capability ladder above means switches that
+move bytes and do no math: ring and tree territory. At that size the stock
+constants stopped fitting, and the adjustments Meta describes making in
+NCCLX, their NCCL fork, are the knobs from earlier sections turned by hand:
+they "tuned chunking and data transfer to fit network latencies" (the chunk
+and FIFO sizing from the memory section) and gave small control messages
 network priority to dodge head-of-line blocking in deep-buffer switches (the
 latency alpha, defended at the fabric level). Read after this post, that
-paragraph of the paper stops being color and becomes a checklist of the
-machinery you now know by name.
+paragraph of the paper is a checklist of machinery you now know by name.
 
-Past a certain scale, teams stop just tuning around collective costs and start
-designing their algorithms around them.
+The last step goes past tuning: the collective's cost stops being an input
+and becomes a design constraint.
 [Kimi K3's technical report](https://arxiv.org/abs/2607.24653) (a
-2.8T-parameter mixture-of-experts model, July 2026) shows both moves. Their
-expert load-balancing statistic needs a quantile over millions of values spread
-across all ranks; rather than gather them, each rank builds a histogram and
-"a single all-reduce sums the per-rank bin counts," which the report prices at
-under one percent of exchanging the raw values. The computation was reshaped
-until its communication became one small all-reduce, dropped deliberately into
-the cheap regime where the trees and flag protocols above live. And in their
-serving stack, the tensor-parallel all-reduce is "decomposed into a
-reduce-scatter and an all-gather," with a compute kernel inserted between the
-two halves and a norm fused into the collective itself: the identity this post
-opened with, cracked open on purpose to hide work inside it. One honest caveat for reading modern reports: in mixture-of-experts
-training the bulkiest traffic has moved to all-to-all expert dispatch (K3's
-MoonEP, the pipeline co-design in
+2.8T-parameter mixture-of-experts model, July 2026) shows the move twice.
+Their expert load-balancing statistic needs a quantile over millions of values
+spread across every rank; rather than gather them, each rank builds a
+histogram and "a single all-reduce sums the per-rank bin counts," which the
+report prices at under one percent of exchanging the raw values. The
+computation was reshaped until its communication became one small all-reduce,
+dropped deliberately into the cheap regime where the trees and flag protocols
+above live. Their serving stack makes the mirror move: the tensor-parallel
+all-reduce is "decomposed into a reduce-scatter and an all-gather," a compute
+kernel slots in between the two halves, and a norm is fused into the
+collective itself. That's the identity this post opened with, cracked open on
+purpose to hide work inside it.
+
+One caveat for reading these reports: in mixture-of-experts training the
+bulkiest traffic has moved to all-to-all expert dispatch (K3's MoonEP, the
+pipeline co-design in
 [DeepSeek-V3's report](https://arxiv.org/abs/2412.19437), and
-[GLM-5](https://arxiv.org/abs/2602.15763)'s
-hierarchical all-to-all that splits the intra-node and inter-node halves,
-which is the same fabric-level split as NCCL's chain-inside-node,
-tree-across-nodes construction). That's a different collective with different
-math and deserves its own post. Gradient
-sync and tensor parallelism still run on the reduce-scatter, all-gather, and
+[GLM-5](https://arxiv.org/abs/2602.15763)'s hierarchical all-to-all that
+splits the intra-node and inter-node halves, the same fabric-level split as
+NCCL's chain-inside-node, tree-across-nodes construction). That's a different
+collective with different math and deserves its own post. Gradient sync and
+tensor parallelism still run on the reduce-scatter, all-gather, and
 all-reduce described here.
 
-And if you want measured curves rather than model curves for building your own
-intuition, ["Demystifying NCCL"](https://arxiv.org/abs/2507.04786) (2025) is
-the study to read: independent
-microbenchmarks of the Simple, LL, and LL128 protocols and the ring and tree
-algorithms across message sizes and cluster sizes, mapping in detail where
-each one actually wins: LL and LL128 small, Simple large, trees pulling ahead
-as node counts grow. Different NCCL version (2.19), same machinery,
-independently measured.
+And when you want measured curves rather than model curves,
+["Demystifying NCCL"](https://arxiv.org/abs/2507.04786) (2025) is the study
+to read: independent microbenchmarks of the Simple, LL, and LL128 protocols
+and the ring and tree algorithms across message sizes and cluster sizes,
+mapping where each one actually wins. LL and LL128 take the small end, Simple
+the large end, and trees pull ahead as node counts grow. Different NCCL
+version (2.19), same machinery, independently measured.
 
 ## Watch it decide
 
