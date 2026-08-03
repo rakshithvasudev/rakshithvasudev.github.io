@@ -519,7 +519,15 @@ comment at [`src/device/all_reduce.h:161`](https://github.com/NVIDIA/nccl/blob/5
 
 **There's no whole-message wait anywhere.** Same slicing and 8-slot FIFOs as the
 ring, so tree latency really is proportional to depth, not depth times message
-size.
+size. The memory story from earlier survives the change too. A tree
+rank keeps connections to at most four neighbors per channel, up to three
+children and a parent, against the ring's two, and each connection carries the
+same fixed slots. A parent reduces its children's incoming slices against its
+own contribution in registers as they stream through
+(`recvReduceSend` with a fan-in of three,
+[`src/device/all_reduce.h:200`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L200)),
+so nothing accumulates anywhere. More neighbors costs a few more megabytes of
+staging, never anything proportional to the tensor.
 
 ## How NCCL picks: a cost model, not a threshold
 
