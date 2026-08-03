@@ -25,9 +25,14 @@ source so you can check everything I claim. Everything below is from NCCL 2.30
 
 If you only take three lines from this post:
 
-1. The ring is bandwidth optimal but its latency grows linearly with the number of
-   GPUs. The tree is the opposite: latency grows with the log of the node count, but
-   it gives up some bandwidth.
+1. Ring and tree trade off the two costs every transfer has: a fixed delay per
+   hop, and time proportional to the bytes moved. The ring moves the fewest
+   bytes any all-reduce can, so it wins when the message is large, but no
+   result is ready until it has hopped through every GPU in sequence, so its
+   fixed delay grows with GPU count and dominates when the message is small.
+   The tree is the mirror image: it reaches every node in a logarithmic number
+   of hops, so small messages finish much sooner, but it moves data less
+   efficiently, so large messages go slower than the ring.
 2. There is no threshold constant that picks between them. NCCL models every
    algorithm and protocol pair as `time = latency + bytes/bandwidth` and takes the
    argmin, per call, at enqueue time.
