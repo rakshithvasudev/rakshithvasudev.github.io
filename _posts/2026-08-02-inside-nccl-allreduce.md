@@ -635,6 +635,26 @@ then `multimem.st`, which asks the switch to replicate the sum back to everyone
 (`src/device/all_reduce.h:441`). One read, one write, per byte. No ring position,
 no steps, no per-peer anything. The reduction happens in the switch fabric.
 
+If that last sentence trips your too-good-to-be-true alarm, good, it should. So
+here is exactly where the work goes. The switch really does execute the adds:
+the third-generation NVSwitch ASIC carries dedicated SHARP reduction units
+(NVIDIA quotes 400 GFLOPS of FP32 reduction throughput per switch, with FP16,
+BF16, FP32 and FP64 supported), and a `multimem.ld_reduce` is a load whose
+responses from all subscribed memories get combined at the switch ports before
+one result returns to the GPU that asked. But the GPUs are not idle and the
+wires are not free. Every GPU still runs this kernel over its `1/n` share of the
+buffer, issuing every load and store; the diagram's arrows are real NVLink
+traffic, one pass up and one pass down per byte on each GPU's link. That's the
+actual win over the ring, where each link carries every byte roughly twice in
+each direction: NVLS halves per-link traffic, which is why the cost model
+credits all-reduce with doubled NVLS bandwidth (`intraBw *= 2.0f` in
+`src/graph/tuning.cc:315`). And in the common unregistered path the scatter and
+gather warp teams still stage your data into the multicast buffers with plain
+copies, and the divide for an average still runs on the GPU as the `postOp`. So
+"the switch does the math" is precise about the bulk sums, and only the sums.
+The choreography, the staging, and the fixups stay on the GPU; what disappears
+is GPU ALUs touching the reduction and any software notion of a peer.
+
 <div style="text-align:center">
 <svg viewBox="0 0 680 240" width="100%" style="max-width:680px;height:auto" role="img" aria-label="NVLS all-reduce: GPUs issue multimem loads that the NVSwitch reduces, and multimem stores that it replicates">
 <rect x="14" y="6" width="652" height="216" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
@@ -683,6 +703,45 @@ the intra-node reduction and IB SHARP or an inter-node double binary tree
 Tree, CollNetDirect, CollNetChain, NVLS, and NVLSTree
 (`src/device/generate.py:87`), and every entry is just a different answer to "who
 does the adds, and who moves the bytes".
+
+## What about EFA, where no switch does math?
+
+A fair objection at this point: most large training runs aren't on SuperPODs
+with SHARP-capable InfiniBand. A huge share of them are on AWS, and EFA's
+switches do not do math. NCCL talks to EFA through a network plugin
+([aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl), libfabric underneath), and
+that plugin implements the point-to-point network API only; there is no CollNet
+backend for EFA. So what happens to the menu?
+
+Exactly what the gating code says happens (`src/graph/tuning.cc:504`). With no
+CollNet, the CollNetDirect and CollNetChain rows are disabled outright, and
+multi-node NVLS goes with them, because multi-node NVLS is NVLS inside the node
+plus SHARP between nodes. What survives for multi-node jobs is Ring, Tree, and
+the quiet star of EFA clusters, NVLS_TREE: NVLink SHARP inside each node (a
+p5's eight H100s sit on third-generation NVSwitch, rented or not, so the switch
+math from the last section still happens) stitched to the double binary tree
+over EFA between nodes. Nothing in this post stops applying on AWS; only the
+inter-node offload column disappears, and the in-node offload keeps working.
+
+Two EFA-specific footnotes that bite in practice. First, protocols. LL128's
+entire trick assumes the fabric delivers 128-byte aligned writes atomically and
+in order. InfiniBand promises that. EFA's SRD transport delivers out of order by
+design, so for years the AWS plugin protected you by exporting
+`NCCL_PROTO=simple`, which zeroes the LL and LL128 rows through the same enable
+mask as every other exclusion in this post. On p5-class instances with a recent
+plugin and libfabric, EFA can promise in-order 128-byte aligned writes and the
+plugin stopped disabling the fast protocols. Which world you're in is visible in
+the TUNING dump below. Second, latency. EFA's per-message latency is higher than
+InfiniBand's, and it enters the model as the NIC latency added to every
+inter-node hop (`graphs->latencyInter`, `src/graph/tuning.cc:389`). A higher
+network alpha stretches every term with `interLat` in it, and since ring pays
+that term `2(nNodes-1)` times against the tree's `2·log2(nNodes)`, the practical
+effect is that tree stays the right answer to larger message sizes on EFA than
+it does on InfiniBand.
+
+The sentence to keep: the cost model has no special case for EFA. The fabric
+just zeroes some rows and raises some constants, and the same argmin over
+whatever is left explains everything the log shows you.
 
 ## Watch it decide
 
@@ -756,8 +815,12 @@ Claims about NCCL internals are checked against the NCCL master source at commit
 - [Optimization of Collective Communication Operations in MPICH](https://doi.org/10.1177/1094342005051521),
   Thakur, Rabenseifner, Gropp. The classic treatment of allreduce algorithm
   selection by message size, twenty years before this cost model.
-- [Doubling all2all Performance with NVIDIA Collective Communication Library 2.12](https://developer.nvidia.com/blog/doubling-all2all-performance-with-nvidia-collective-communication-library-2-12/)
-  and [NVLink SHARP documentation](https://docs.nvidia.com/networking/display/sharpv300)
-  for the in-network reduction hardware.
+- [Upgrading Multi-GPU Interconnectivity with the Third-Generation NVIDIA NVSwitch](https://developer.nvidia.com/blog/upgrading-multi-gpu-interconnectivity-with-the-third-generation-nvidia-nvswitch/),
+  where the switch's SHARP reduction hardware and its FP32 throughput are
+  described, and [NVIDIA SHARP documentation](https://docs.nvidia.com/networking/display/sharpv300)
+  for the InfiniBand side of in-network reduction.
+- [aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl), the plugin NCCL uses on
+  AWS EFA, whose [release notes](https://github.com/aws/aws-ofi-nccl/releases)
+  track when LL and LL128 stopped being disabled on p5-class instances.
 - [NCCL environment variables](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html),
   including `NCCL_ALGO`, `NCCL_PROTO`, and the debug switches used above.
