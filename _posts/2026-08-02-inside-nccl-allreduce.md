@@ -32,8 +32,9 @@ If you only take three lines from this post:
    result is ready until it has hopped through every GPU in sequence, so its
    fixed delay grows with GPU count and dominates when the message is small.
    The tree is the mirror image: it reaches every node in a logarithmic number
-   of hops, so small messages finish much sooner, but it moves data less
-   efficiently, so large messages go slower than the ring.
+   of hops, so small messages finish much sooner; its bandwidth can in principle
+   match the ring's, but in practice falls short of it, so the largest messages
+   still go to the ring.
 2. There is no threshold constant that picks between them. NCCL models every
    algorithm and protocol pair as `time = latency + bytes/bandwidth` and takes the
    argmin, per call, at enqueue time.
@@ -53,9 +54,11 @@ all-reduce (sum) ------------------------------
 after:   A: [8, 4, 12, 8]     B: [8, 4, 12, 8]
 ```
 
-(NCCL reduces with sum, prod, min, max, or avg; the average DDP wants is a sum
-with the divide folded into the final step, a trick called `postOp` that you'll
-see in the kernel below.) One fact from the last post carries most of
+(NCCL reduces with sum, prod, min, max, or avg. The average is a sum with the
+division by n folded into the collective itself: for floating point types each
+rank's contribution is pre-scaled by 1/n as it's read, and for integer types
+the finished sum is divided once at the last step; both variants live in
+`hostToDevRedOp`, [`src/enqueue.cc:2526`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L2526).) One fact from the last post carries most of
 this one: all-reduce = reduce-scatter + all-gather. First
 every rank ends up owning the finished sum of one slice, then the finished
 slices circulate until everyone has all of them. Keep that split in mind: the
@@ -221,7 +224,7 @@ optimal. Keep that trade in your head; the rest of this post is NCCL renegotiati
 it from every direction.
 
 And it really is fused, not two calls. The whole thing is one loop in the device
-kernel, `runRing` in `src/device/all_reduce.h:14`. Trimmed to its skeleton:
+kernel, `runRing` in [`src/device/all_reduce.h:14`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L14). Trimmed to its skeleton:
 
 ```c
 // step 0: push my chunk to the next GPU
@@ -246,12 +249,14 @@ Those primitive names are the vocabulary the whole library is written in.
 `recvReduceSend` means "receive from my ring predecessor, add my contribution,
 send the result to my successor", and it happens as one fused operation: data
 streams from the receive buffer through the adds and out the send buffer without a
-round trip to memory in between. The `postOp=true` on the middle step is where an
-average gets its divide, folded into the step where each chunk's sum completes.
+round trip to memory in between. The `postOp=true` on the middle step marks where
+each chunk's sum completes, and any final fixup runs exactly there, like the
+divide of an integer average (floating point averages need no fixup, since every
+contribution was pre-scaled by 1/n on the way in).
 
 Two details the textbook picture leaves out. First, a rank doesn't wait for a whole
 chunk before forwarding. Chunks are cut into slices and pushed through an 8-slot
-FIFO per peer (`NCCL_STEPS` in `src/include/device.h:26`), so step `j+1` of the
+FIFO per peer (`NCCL_STEPS` in [`src/include/device.h:26`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h#L26)), so step `j+1` of the
 pipeline starts while step `j` is still arriving. Second, none of this runs once.
 NCCL carves the buffer across many independent rings.
 
@@ -259,11 +264,11 @@ NCCL carves the buffer across many independent rings.
 
 A "channel" is NCCL's unit of parallelism: one CUDA thread block, on one SM, with
 its own ring order, its own FIFO buffers, and its own slice of the input
-(`grid.x` is exactly the channel count, `src/enqueue.cc:1753`). A fabric moving
+(`grid.x` is exactly the channel count, [`src/enqueue.cc:1758`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L1758)). A fabric moving
 hundreds of gigabytes per second can't be saturated by one thread block doing
 loads and stores, so NCCL runs up to 64 channels (`MAXCHANNELS`,
-`src/include/device.h`) and splits every collective across them. The ring orderings themselves come out of a topology search
-(`src/graph/search.cc`) that walks the PCIe/NVLink/NIC graph at init time looking
+[`src/include/device.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h)) and splits every collective across them. The ring orderings themselves come out of a topology search
+([`src/graph/search.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/search.cc)) that walks the PCIe/NVLink/NIC graph at init time looking
 for orderings that maximize per-channel bandwidth, which is why the ring order
 rarely matches rank order.
 
@@ -293,7 +298,7 @@ explicitly.)
 
 Second, the staging that does exist is fixed size and allocated exactly once. The
 FIFO between two ring neighbors is the per-connection buffer from earlier: 4 MiB
-for Simple, 512 KiB for LL, 4.6875 MiB for LL128 (`src/init.cc:810`), each carved
+for Simple, 512 KiB for LL, 4.6875 MiB for LL128 ([`src/init.cc:810`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/init.cc#L810)), each carved
 into `NCCL_STEPS = 8` slots. These are allocated when the communicator is created
 (that memory bump you see at `init_process_group` time is exactly this, plus
 peers and channels), and then reused for every collective for the life of the
@@ -301,7 +306,7 @@ communicator. A 4 KB all-reduce and a 10 GB all-reduce flow through the same
 slots.
 
 Third, backpressure. The sender is allowed to run at most 8 slots ahead of the
-receiver: `waitPeer` (`src/device/prims_simple.h:100`) spins until the receiver's
+receiver: `waitPeer` ([`src/device/prims_simple.h:100`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_simple.h#L100)) spins until the receiver's
 head counter says a slot has been drained before writing another. So the bytes in
 flight per connection are capped at the buffer size no matter how mismatched the
 two GPUs' progress is. The tensor streams through a fixed window, like a river
@@ -357,7 +362,7 @@ through a lock:
 
 Add it up and the total staging per rank is channels times connections times
 roughly 9 MiB (the three protocol buffers together, carved out per connection in
-`src/transport/p2p.cc:488`). Order of 100 to 300 MiB for a typical communicator,
+[`src/transport/p2p.cc:488`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/p2p.cc#L488)). Order of 100 to 300 MiB for a typical communicator,
 fixed at init, flat forever after. That's why NCCL's memory footprint shows up
 when you create the communicator and then never moves during training, and why
 "how big is the tensor" never appears in the memory story at all. The
@@ -377,19 +382,21 @@ size) the alpha term is the whole cost.
 
 The fix is old: reduce up a tree, broadcast back down. Latency becomes logarithmic
 in the number of nodes. The problem that kept trees out of NCCL for years is
-bandwidth: in a binary tree, roughly half the ranks are leaves. A leaf only pushes
-its own data up once, while an interior rank moves three times that much (two
-children's data coming in, the merged stream going up, and the broadcast coming
-back down), so the collective runs at the speed of its busiest ranks while the
-leaves' links sit mostly idle. That imbalance is the problem the double binary
+bandwidth: in a binary tree, roughly half the ranks are leaves. A leaf sends once per chunk,
+its own contribution going up. An interior rank sends three times: the merged
+stream up, plus the broadcast copy out to each of its two children on the way
+back down. The collective runs at the speed of its busiest ranks, so the tree
+pays that 3x while the leaves' send links sit mostly idle. That imbalance is the problem the double binary
 tree solves.
 
 ## The double binary tree
 
-NCCL builds the tree in `src/graph/trees.cc:32` with a bit trick: for a power-of-two
-world, take each rank's lowest set bit; flipping it gives your parent, halving it
-gives your children. The comment in the source draws it better than I can, so here
-it is, lifted directly (14 ranks):
+NCCL builds the tree in [`src/graph/trees.cc:32`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/trees.cc#L32) with a bit trick: a rank's lowest
+set bit fixes its depth, and a couple of integer operations on that bit produce
+its parent (clear it, set the next bit up, with a fallback at the edge of the
+rank range) and its children (the same bit halved, subtracted and added). It
+works for any rank count. The comment in the source draws the result better than
+I can, so here it is, lifted directly (14 ranks):
 
 ```
 0---------------8
@@ -402,9 +409,11 @@ it is, lifted directly (14 ranks):
 ```
 
 Notice who the leaves are: the odd ranks. Every interior rank is even. So build a
-second tree that's the mirror image of the first (`ncclGetDtree`,
-`src/graph/trees.cc:90`), and the roles swap exactly: every rank that idles as a
-leaf in tree one works as an interior node in tree two. NCCL then assigns half its
+second tree with the roles swapped: the mirror image of the first when the count
+is even, or the same tree shifted by one rank when it's odd (`ncclGetDtree`,
+[`src/graph/trees.cc:90`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/trees.cc#L90)). Either way, a rank that idles as a leaf in tree one
+works as an interior node in tree two, give or take one boundary rank pulling
+interior duty in both when the count is odd. NCCL then assigns half its
 channels to each tree, so half of every buffer flows up one tree while the other
 half flows up the other. Both trees together use every rank's send bandwidth every
 step. This is the construction from Sanders, Speck and Träff's two-tree paper, and
@@ -469,22 +478,24 @@ bandwidth.
 Three implementation details that surprised me:
 
 **The tree is between nodes, not GPUs.** The double binary tree is built over
-*nodes* (`connectTrees`, `src/graph/connect.cc:138`). Inside a node, the local GPUs
+*nodes* (`connectTrees`, [`src/graph/connect.cc:138`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/connect.cc#L138)). Inside a node, the local GPUs
 form a simple chain hanging off the node's position in the tree
-(`src/graph/connect.cc:61`). So a 128-node, 1024-GPU job has a 128-node double tree
+([`src/graph/connect.cc:61`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/connect.cc#L61)). So a 128-node, 1024-GPU job has a 128-node double tree
 with 8-GPU chains inside NVLink domains, where hops are cheap. On a single node the
 "tree" degenerates to just the chain, which buys nothing over the ring; the tree's
 win is a multi-node story.
 
 **Reduce and broadcast run at the same time.** I pictured tree all-reduce as two
 phases: everything reduces to the root, then everything broadcasts down. The kernel
-doesn't work that way. `runTreeSplit` (`src/device/all_reduce.h:146`) splits each
-rank's thread block into two teams: one runs `recvReduceSend` up the tree while the
-other simultaneously runs `recvCopySend` down it, chunk by chunk. A chunk bounces
+doesn't work that way. `runTreeSplit` ([`src/device/all_reduce.h:146`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L146)) splits each
+non-root rank's thread block into two teams: one runs `recvReduceSend` up the tree
+while the other simultaneously runs `recvCopySend` down it, chunk by chunk (the
+root, with no up direction, keeps all its threads on one team that turns sums
+around). A chunk bounces
 off the root and heads back down while later chunks are still climbing. The split
 is 70/30 in favor of the reduce side for the low-latency protocols, because
 reducing three children's data costs more than forwarding to three children (the
-comment at `all_reduce.h:160` says exactly this).
+comment at [`src/device/all_reduce.h:161`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L161) says exactly this).
 
 **There's no whole-message wait anywhere.** Same slicing and 8-slot FIFOs as the
 ring, so tree latency really is proportional to depth, not depth times message
@@ -493,13 +504,13 @@ size.
 ## How NCCL picks: a cost model, not a threshold
 
 Old NCCL had `NCCL_TREE_THRESHOLD`. It was removed in 2.5, and what replaced it is
-nicer. At init, `ncclTopoTuneModel` (`src/graph/tuning.cc:243`) fills two tables,
+nicer. At init, `ncclTopoTuneModel` ([`src/graph/tuning.cc:243`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L243)) fills two tables,
 `latencies[collective][algorithm][protocol]` and
 `bandwidths[collective][algorithm][protocol]`, from measured constants: base launch
 overheads, per-hop latencies for NVLink vs PCIe vs network, per-architecture
 bandwidth ceilings. Then every call (really every aggregated batch of calls) runs
-the argmin in `topoGetAlgoInfo` (`src/enqueue.cc:2028`) over all pairs, where the
-cost of a pair is one line (`src/graph/tuning.cc:646`):
+the argmin in `topoGetAlgoInfo` ([`src/enqueue.cc:2028`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L2028)) over all pairs, where the
+cost of a pair is one line ([`src/graph/tuning.cc:653`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L653)):
 
 ```c
 *time = lat * latCount + nBytes / (1000 * bw);
@@ -546,7 +557,7 @@ node count. No threshold anywhere; it falls out of two lines crossing.
 </div>
 
 My favorite artifact in this file is `treeCorrectionFactor`
-(`src/graph/tuning.cc:623`), a hand-tuned table of 24 numbers, one per power-of-two
+([`src/graph/tuning.cc:623`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L623)), a hand-tuned table with 24 entries per protocol, one per power-of-two
 size from 64 B up, that derates tree bandwidth by up to 60 percent in the awkward
 middle sizes around 128 KB to 1 MB:
 
@@ -573,17 +584,23 @@ physically looks like, and it exists because of a synchronization problem: how d
 the receiver know the data in the FIFO slot is ready?
 
 **Simple** is the obvious design. Write the payload, execute a memory fence, then
-bump a tail counter the receiver is polling (`src/device/prims_simple.h:164`). Full
+bump a tail counter the receiver is polling ([`src/device/prims_simple.h:164`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_simple.h#L164)). Full
 bandwidth, but the fence is expensive and sits on the critical path of every hop,
-so it shows up as latency. NCCL even dedicates a warp per block just to overlap the
-fence with the copies (the "extra warp for sync" at `src/enqueue.cc:2102`).
+so it shows up as latency. NCCL even carves a warp off the workers so the fence
+and pointer updates overlap with the copies ("we need an extra warp to overlap
+the threadfence and the copy", [`src/device/prims_simple.h:585`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_simple.h#L585)), and budgets one
+extra warp for exactly this when launching Simple ring kernels
+([`src/enqueue.cc:2107`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L2107)).
 
 **LL (low latency)** makes the fence disappear with a trick. Data travels in
 16-byte lines: 4 bytes of data, 4 bytes of flag, 4 of data, 4 of flag
-(`ncclLLFifoLine`, `src/include/device.h:75`). The GPU writes each line with a
-single 16-byte atomic store, so the flag and the data arrive together, and a
-receiver spinning on the flags can consume the data the moment it sees them. No
-fence, no tail pointer, no waiting for a whole slot:
+(`ncclLLFifoLine`, [`src/include/device.h:75`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h#L75)). The layout is the trick: each
+8-byte half of the line carries its own flag right beside its own data, so as
+long as the transport delivers 8 bytes atomically (NVLink does, RDMA writes do),
+a flag can never show up ahead of the data it vouches for. The comment above the
+struct spells out exactly this. A receiver spinning on the flags can therefore
+consume the data the moment it sees them. No fence, no tail pointer, no waiting
+for a whole slot:
 
 ```
 one LL line, 16 bytes on the wire:
@@ -596,12 +613,14 @@ The price is brutal and paid knowingly: half the wire bytes are flags, so LL top
 out at 50 percent of link bandwidth. For a 4 KB all-reduce, nobody cares; latency
 is everything.
 
-**LL128** is the same flag trick with better arithmetic, for links that can
-deliver a 128-byte write atomically (NVLink). The unit becomes a 128-byte line:
-15 words of data, 1 word of flag, so 120 of 128 bytes are payload, 93.75 percent
-of bandwidth at latency close to LL (`src/device/prims_ll128.h`). On NVLink paths
-LL128 is such a good default that it covers a huge range of sizes, which is why
-the model bothers pricing all three (`src/graph/tuning.cc:328`).
+**LL128** is the same flag trick with better arithmetic, for paths that can
+guarantee a 128-byte write lands whole and in order: NVLink inside the node, and
+network routes that preserve the guarantee end to end. The unit becomes a
+128-byte line: 15 words of data, 1 word of flag, so 120 of 128 bytes are
+payload, 93.75 percent of bandwidth at roughly half of Simple's per-hop latency
+([`src/device/prims_ll128.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_ll128.h)). On NVLink paths LL128 is such a good default that
+it covers a huge range of sizes, which is why the model bothers pricing all
+three ([`src/graph/tuning.cc:328`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L328)).
 
 | | Simple | LL | LL128 |
 |---|---|---|---|
@@ -621,10 +640,12 @@ reducing and links do the moving. On Hopper and newer machines with NVSwitch, th
 switch itself can reduce, and NCCL's fastest single-node algorithm is built on
 that. NVIDIA calls it NVLink SHARP; in the code it's `NCCL_ALGO_NVLS`.
 
-The mechanism sits on CUDA multicast memory. At init, NCCL creates a multicast
-object (`cuMulticastCreate`, `src/transport/nvls.cc`) that every local GPU binds
-its buffer into, giving each GPU a second address for the same logical memory.
-Loads and stores through that address are special:
+The mechanism sits on CUDA multicast memory. At init, every local GPU binds
+NCCL's staging buffers into a shared multicast object (`cuMulticastCreate`,
+[`src/transport/nvls.cc:60`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/nvls.cc#L60); registering your own tensors later binds them into a
+second object of their own). Each GPU then holds two kinds of pointer: a unicast
+pointer naming its own pages, and a multicast pointer naming the whole group at
+once. Loads and stores through the multicast pointer are special:
 
 {% raw %}
 ```c
@@ -636,18 +657,19 @@ multimem.st.global.v4.f32  [%0], {%1,%2,%3,%4};
 ```
 {% endraw %}
 
-Read the whole all-reduce kernel loop for the registered-buffer case and it's
-almost nothing: each GPU walks its slice issuing `multimem.ld_reduce`, which asks
-the switch to fetch that address from all peers and add the values in transit,
-then `multimem.st`, which asks the switch to replicate the sum back to everyone
-(`src/device/all_reduce.h:441`). One read, one write, per byte. No ring position,
-no steps, no per-peer anything. The reduction happens in the switch fabric.
+Read the reduce team's loop in the NVLS kernel and it's almost nothing: each GPU
+walks its slice of the buffer with a `directRecvDirectSend` whose template
+arguments mark both source and destination as multimem
+([`src/device/all_reduce.h:447`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L447)). That compiles down to the pair above: one
+`multimem.ld_reduce`, asking the switch to fetch that address from all peers and
+add the values in transit, and one `multimem.st`, asking it to replicate the sum
+back to everyone. One read, one write, per byte. No ring position, no steps, no
+per-peer anything. The reduction happens in the switch fabric.
 
 If that last sentence trips your too-good-to-be-true alarm, good, it should. So
 here is exactly where the work goes. The switch really does execute the adds:
-the third-generation NVSwitch ASIC carries dedicated SHARP reduction units
-(NVIDIA quotes 400 GFLOPS of FP32 reduction throughput per switch, with FP16,
-BF16, FP32 and FP64 supported), and a `multimem.ld_reduce` is a load whose
+starting with the third generation, the NVSwitch ASIC carries dedicated SHARP
+reduction hardware, and a `multimem.ld_reduce` is a load whose
 responses from all subscribed memories get combined at the switch ports before
 one result returns to the GPU that asked. But the GPUs are not idle and the
 wires are not free. Every GPU still runs this kernel over its `1/n` share of the
@@ -656,9 +678,12 @@ traffic, one pass up and one pass down per byte on each GPU's link. That's the
 actual win over the ring, where each link carries every byte roughly twice in
 each direction: NVLS halves per-link traffic, which is why the cost model
 credits all-reduce with doubled NVLS bandwidth (`intraBw *= 2.0f` in
-`src/graph/tuning.cc:315`). And in the common unregistered path the scatter and
+[`src/graph/tuning.cc:315`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L315)). And in the common unregistered path the scatter and
 gather warp teams still stage your data into the multicast buffers with plain
-copies, and the divide for an average still runs on the GPU as the `postOp`. So
+copies. Reductions the switch can't express never leave the GPU at all: the
+multimem path covers sums and min/max only (`ncclNvlsSupported`,
+[`src/include/device.h:587`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h#L587)), so a floating point average, which NCCL implements
+as a pre-scaled sum, is routed to ring or tree even on this hardware. So
 "the switch does the math" is precise about the bulk sums, and only the sums.
 The choreography, the staging, and the fixups stay on the GPU; what disappears
 is GPU ALUs touching the reduction and any software notion of a peer.
@@ -696,20 +721,20 @@ is GPU ALUs touching the reduction and any software notion of a peer.
 </div>
 
 In the cost tables NVLS carries a high fixed latency (25 microseconds in
-`src/graph/tuning.cc`, versus 3.4 for a ring hop over NVLink) and a bandwidth
+[`src/graph/tuning.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc), versus 3.4 for a ring hop over NVLink) and a bandwidth
 entry that gets doubled for all-reduce because the reduce-in and broadcast-out
 directions pipeline through the switch simultaneously. So tiny all-reduces still
 go to LL rings or trees, and big single-node ones go to the switch.
 
 The same idea exists between nodes. InfiniBand switches with SHARP can reduce in
 the network too, and NCCL reaches them through its CollNet plugin: the proxy
-literally calls `iallreduce` on the network (`src/transport/coll_net.cc:815`) and
+literally calls `iallreduce` on the network ([`src/transport/coll_net.cc:815`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/coll_net.cc#L815)) and
 gets back fully reduced data, no inter-node ring or tree traffic at all. And the
 hybrids compose exactly like you'd hope: multi-node NVLS uses the NVSwitch for
 the intra-node reduction and IB SHARP or an inter-node double binary tree
 (`NVLS_TREE`) for the cross-node part. The full all-reduce menu in 2.30 is Ring,
 Tree, CollNetDirect, CollNetChain, NVLS, and NVLSTree
-(`src/device/generate.py:87`), and every entry is just a different answer to "who
+([`src/device/generate.py:87`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/generate.py#L87)), and every entry is just a different answer to "who
 does the adds, and who moves the bytes".
 
 ## What your hardware takes off the menu
@@ -735,19 +760,19 @@ The bets, one per row:
 Now walk the generations with that table in hand. A PCIe-only server, no
 NVLink, is the floor: ring and tree over PCIe with LL and Simple, and that's the
 whole menu, because LL128 demands NVLink-grade write atomicity even inside the
-node (the gate is `graphs->typeIntra <= PATH_NVB`, `src/graph/tuning.cc:531`).
+node (the gate is `graphs->typeIntra <= PATH_NVB`, [`src/graph/tuning.cc:531`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L531)).
 A V100 or A100 box with NVLink and an earlier NVSwitch gets LL128 back and full
 ring/tree bandwidth, but no switch arithmetic: those switch generations forward
 bytes and do no math, and the code encodes that bluntly, an efficiency table
 with literal zeros for Volta and Ampere (`nvlsEfficiency`,
-`src/graph/tuning.cc:139`). Everything in this post up through the cost model
+[`src/graph/tuning.cc:139`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L139)). Everything in this post up through the cost model
 applies to these machines unchanged; the offload sections just aren't about
 them. Reduction-capable switches inside the node arrived with Hopper, and only
 then does the NVLS row light up.
 
 Between nodes the same logic repeats one level out. Plain Ethernet, RoCE, or
 InfiniBand without SHARP configured moves bytes and does no math, so the
-CollNet rows and multi-node NVLS are zeroed (`src/graph/tuning.cc:504`), and
+CollNet rows and multi-node NVLS are zeroed ([`src/graph/tuning.cc:504`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L504)), and
 inter-node all-reduce is rings and double binary trees, exactly the two
 algorithms this post spent most of its length on. That is the common case in
 most datacenters, not the exception. If the nodes themselves have
@@ -765,7 +790,7 @@ same mask as everything else; on current instance generations it can promise
 in-order 128-byte writes and stopped doing so. And because such fabrics
 typically carry a higher per-message latency than InfiniBand, which enters the
 model through the NIC latency added to every inter-node hop
-(`graphs->latencyInter`, `src/graph/tuning.cc:389`), the ring's
+(`graphs->latencyInter`, [`src/graph/tuning.cc:389`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L389)), the ring's
 `2(nNodes-1)` inter-node hops hurt more against the tree's `2·log2(nNodes)`,
 and the tree stays the right answer out to larger sizes than it would on a
 lower-latency fabric.
@@ -787,12 +812,12 @@ NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=TUNING ./build/all_reduce_perf -b 256 -e 1G -f
 (`all_reduce_perf` is from [nccl-tests](https://github.com/NVIDIA/nccl-tests);
 any PyTorch job with those env vars works the same.) At init, rank 0 dumps the
 entire latency and bandwidth table it computed for your exact topology. Then, for
-every collective, you get one line from `src/enqueue.cc:809` naming the winner:
+every collective, you get one line from [`src/enqueue.cc:822`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L822) naming the winner:
 
 ```
-AllReduce: 4096 Bytes -> Algo Tree proto LL channel{Lo..Hi}={0..1}
-AllReduce: 8388608 Bytes -> Algo Ring proto LL128 channel{Lo..Hi}={0..15}
-AllReduce: 268435456 Bytes -> Algo NVLS proto Simple channel{Lo..Hi}={0..15}
+AllReduce: 4096 Bytes -> Algo TREE proto LL channel{Lo..Hi}={0..1}
+AllReduce: 8388608 Bytes -> Algo RING proto LL128 channel{Lo..Hi}={0..15}
+AllReduce: 268435456 Bytes -> Algo NVLS proto SIMPLE channel{Lo..Hi}={0..15}
 ```
 
 (Those three lines are typical of a single Hopper node; your sizes and
@@ -810,10 +835,11 @@ What I have now:
 
 - All-reduce is a menu, not an algorithm: six who-does-what structures times three
   wire protocols, priced per call by `latency + bytes/bandwidth`, cheapest wins.
-- Ring and tree are both built from the same five primitives (`send`,
-  `recvReduceSend`, `recvReduceCopySend`, `recvCopySend`, `recv`); the
-  reduce-scatter plus all-gather structure from the last post is visible as the
-  two halves of the ring loop, and as the up and down teams of the tree kernel.
+- The ring is built from five primitives (`send`, `recvReduceSend`,
+  `recvReduceCopySend`, `recvCopySend`, `recv`), and the tree reuses the same
+  set plus two more for its root; the reduce-scatter plus all-gather structure
+  from the last post is visible as the two halves of the ring loop, and as the
+  up and down teams of the tree kernel.
 - The tree is a double binary tree over nodes, with every rank interior in
   exactly one tree so no send bandwidth idles, and chains inside each node.
 - Latency work rides flags packed inside the data (LL, LL128); bandwidth work
@@ -834,9 +860,9 @@ Claims about NCCL internals are checked against the NCCL master source at commit
 `5067397` (v2.30, August 2026); file and line references throughout point there.
 
 - [NCCL source on GitHub](https://github.com/NVIDIA/nccl), specifically
-  `src/device/all_reduce.h` (kernels), `src/graph/trees.cc` and
-  `src/graph/rings.cc` (structure construction), `src/graph/tuning.cc` (the cost
-  model), and `src/enqueue.cc` (selection and launch).
+  [`src/device/all_reduce.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h) (kernels), [`src/graph/trees.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/trees.cc) and
+  [`src/graph/rings.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/rings.cc) (structure construction), [`src/graph/tuning.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc) (the cost
+  model), and [`src/enqueue.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc) (selection and launch).
 - [Massively Scale Your Deep Learning Training with NCCL 2.4](https://developer.nvidia.com/blog/massively-scale-deep-learning-training-nccl-2-4/),
   Jeaugey. The double binary tree announcement, with measurements to 24,576 GPUs.
 - [Two-tree algorithms for full bandwidth broadcast, reduction and scan](https://doi.org/10.1016/j.parco.2009.09.001),
@@ -847,9 +873,10 @@ Claims about NCCL internals are checked against the NCCL master source at commit
 - [Optimization of Collective Communication Operations in MPICH](https://doi.org/10.1177/1094342005051521),
   Thakur, Rabenseifner, Gropp. The classic treatment of allreduce algorithm
   selection by message size, twenty years before this cost model.
-- [Upgrading Multi-GPU Interconnectivity with the Third-Generation NVIDIA NVSwitch](https://developer.nvidia.com/blog/upgrading-multi-gpu-interconnectivity-with-the-third-generation-nvidia-nvswitch/),
-  where the switch's SHARP reduction hardware and its FP32 throughput are
-  described, and [NVIDIA SHARP documentation](https://docs.nvidia.com/networking/display/sharpv300)
+- [NCCL 2.17.1 release notes](https://docs.nvidia.com/deeplearning/nccl/release-notes/rel_2-17-1.html),
+  where in-switch reduction landed in NCCL ("Add support for NVLink SHARP
+  Reduction / Broadcast to accelerate intra-node allreduce operations"), and
+  [NVIDIA SHARP documentation](https://docs.nvidia.com/networking/display/sharpv300)
   for the InfiniBand side of in-network reduction.
 - [aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl), the plugin NCCL uses on
   AWS EFA, whose [release notes](https://github.com/aws/aws-ofi-nccl/releases)
