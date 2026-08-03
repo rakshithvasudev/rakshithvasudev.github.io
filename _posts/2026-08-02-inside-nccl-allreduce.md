@@ -15,9 +15,10 @@ was carrying. NCCL doesn't have an all-reduce algorithm. It has six, and three w
 protocols to carry them. Each time you call it, it estimates how long every
 valid pairing would take on your message and your hardware, then runs the
 fastest one. The ring you learned from
-the classic blog posts is just one row of that menu, and on a modern H100 machine it
-often loses to an algorithm where no GPU sends data to any other GPU at all, because
-the NVLink switch does the arithmetic.
+the classic blog posts is just one row of that menu, and on an H100 machine with an
+NVLink switch it stops being the pick once messages get large: the estimate starts
+favoring an algorithm in which no GPU addresses any other GPU, because the switch
+hardware does the arithmetic.
 
 This post is a guided tour of that machinery, with file and line references into the
 source so you can check everything I claim. Everything below is from NCCL 2.30
