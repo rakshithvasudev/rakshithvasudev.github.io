@@ -65,9 +65,10 @@ ring is exactly those two steps, run over real wires.
 
 Start with the algorithm the last post promised. Every rank splits the buffer into
 `n` chunks, one per rank in the ring. The reduce-scatter half takes `n-1` steps: each
-step, every rank sends one chunk to its ring neighbor and receives a different chunk,
-adding what arrives into its own copy. After `n-1` hops a chunk has visited everyone
-and the rank holding it has the full sum. The all-gather half is another `n-1` steps
+step, every rank receives a chunk from one neighbor, adds its own contribution to
+it, and passes the running total to the other neighbor. After `n-1` hops a chunk
+has collected every rank's contribution, and the rank where it lands holds the
+full sum. The all-gather half is another `n-1` steps
 of the same motion, except now the finished chunks circulate unchanged. Total:
 `2(n-1)` steps, and every link carries a different chunk on every step, so nothing
 idles.
@@ -116,7 +117,7 @@ reduce-scatter and all-gather, because the ring all-reduce literally is those tw
 collectives fused.
 
 The one-chunk view shows the journey; it hides the schedule. To see where `2(n-1)`
-actually comes from, watch every buffer of every GPU at once. Three GPUs keep it
+actually comes from, track who holds which running total after every step. Three GPUs keep it
 readable: call GPU i's contributions to the three chunks `ai`, `bi`, `ci`, and
 watch four steps do the whole job:
 
@@ -258,10 +259,10 @@ NCCL carves the buffer across many independent rings.
 
 A "channel" is NCCL's unit of parallelism: one CUDA thread block, on one SM, with
 its own ring order, its own FIFO buffers, and its own slice of the input
-(`grid.x` is exactly the channel count, `src/enqueue.cc:1753`). A 350 GB/s NVLink
-mesh can't be saturated by one block doing loads and stores, so NCCL runs up to 64
-channels (`MAXCHANNELS`, `src/include/device.h`) and splits every collective across
-them. The ring orderings themselves come out of a topology search
+(`grid.x` is exactly the channel count, `src/enqueue.cc:1753`). A fabric moving
+hundreds of gigabytes per second can't be saturated by one thread block doing
+loads and stores, so NCCL runs up to 64 channels (`MAXCHANNELS`,
+`src/include/device.h`) and splits every collective across them. The ring orderings themselves come out of a topology search
 (`src/graph/search.cc`) that walks the PCIe/NVLink/NIC graph at init time looking
 for orderings that maximize per-channel bandwidth, which is why the ring order
 rarely matches rank order.
