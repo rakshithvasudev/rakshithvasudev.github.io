@@ -850,9 +850,9 @@ What I have now:
 The FSDP series will pick this thread right back up: FSDP's actual traffic is
 all-gather and reduce-scatter, and those have their own menu (including PAT,
 parallel aggregated trees, an algorithm that never applies to all-reduce, and
-NVLS variants of their own). Plus the overlap post I already owe you, where these
-channel counts and SM budgets stop being trivia and start being the thing that
-eats your compute.
+NVLS variants of their own). Plus the overlap post I already owe you. The channel
+counts in this one will matter there, because every SM a collective occupies is
+an SM your matmuls don't get.
 
 ## References
 
