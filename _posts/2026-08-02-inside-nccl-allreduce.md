@@ -820,6 +820,73 @@ anything is. Hardware zeroes some rows and sets some constants, and the same
 argmin over whatever remains explains everything the log shows you, on a
 PCIe box from 2018 or on whatever ships next year.
 
+## Does any of this survive ten thousand GPUs?
+
+Everything above was reasoned at whiteboard scale, three GPUs here, a node
+there. A fair question is whether the story holds when the numbers get silly,
+and this is where the published record earns its place in the post.
+
+The double binary tree shipped with measurements. When NVIDIA introduced it in
+NCCL 2.4, they benchmarked all-reduce on the Summit supercomputer at up to
+24,576 GPUs and reported small-message latency improving over rings by up to
+180x at the top end. That number is the cost model's arithmetic escaping the
+whiteboard: 24k GPUs is about 4,096 nodes, so a ring pays on the order of
+2(nNodes-1), around 8,000 sequential network hops, while the tree pays
+2·log2(nNodes), about 24. The idealized ratio is in the hundreds; the measured
+180x is that prediction meeting real fabric, friction included. The same post is
+honest about the bandwidth side too: the double tree held full bandwidth on
+Summit except when traffic crossed the InfiniBand fabric's top switch layer,
+which is the "topology still leaks in" caveat this post keeps hitting.
+
+Scale also does something sneakier than stretching the crossover plot's x axis:
+it drags every workload leftward on it. The ring's chunks are `S/n`, so a 1 GiB
+gradient bucket that feels enormous is, across 16,384 ranks, a 64 KiB chunk per
+rank, sitting exactly in the mid-size band where the latency term and the tree
+correction factor live. At frontier scale, "large message" quietly stops
+existing from any single rank's point of view, and the latency-oriented
+machinery in this post, trees, LL and LL128, switch offload, stops being a
+small-message footnote and becomes the main event.
+
+The Llama 3 report makes the same points from the practitioner's side. The 405B
+model trained on up to 16,000 H100s inside a 24,000-GPU cluster wired as a
+three-layer Ethernet Clos fabric with RoCE, which per the capability ladder
+above means switches that move bytes and do no math: ring and tree territory.
+And the fixes Meta describes making in NCCLX, their NCCL fork, are precisely
+the knobs from earlier sections: they "tuned chunking and data transfer to fit
+network latencies" (the chunk and FIFO sizing from the memory section) and gave
+small control messages network priority to dodge head-of-line blocking in
+deep-buffer switches (the latency alpha, defended at the fabric level). Read
+after this post, that paragraph of the paper stops being color and becomes a
+checklist of the machinery you now know by name.
+
+The newest frontier reports still speak this post's vocabulary, sometimes
+verbatim. Kimi K3's technical report (a 2.8T-parameter mixture-of-experts
+model, July 2026) has two examples worth reading with this post in hand. Their
+expert load-balancing statistic needs a quantile over millions of values spread
+across all ranks; instead of gathering them, each rank builds a histogram and
+"a single all-reduce sums the per-rank bin counts," which the report prices at
+under one percent of exchanging the raw values. That is an algorithm redesigned
+until its communication fits the small-message regime, exactly where the trees
+and flag protocols above live. And in their serving stack, the tensor-parallel
+all-reduce is "decomposed into a reduce-scatter and an all-gather," with a
+compute kernel inserted between the two halves and a norm fused into the
+collective itself: the identity this post opened with, used as a seam to hide
+work in. One honest caveat for reading modern reports: in mixture-of-experts
+training the bulkiest traffic has moved to all-to-all expert dispatch (K3's
+MoonEP, and the pipeline co-design in DeepSeek-V3's report), which is a
+different collective with different math and deserves its own post. Gradient
+sync and tensor parallelism still run on the reduce-scatter, all-gather, and
+all-reduce described here.
+
+If you want the measured version of everything here, there's also a proper
+independent study: "Demystifying NCCL" (2025) microbenchmarks the Simple, LL,
+and LL128 protocols and the ring and tree algorithms across message sizes and
+cluster sizes, and its measurements land where the cost model says they should:
+LL and LL128 winning small, Simple winning large, trees earning their keep as
+node counts grow. Different NCCL version (2.19), same machinery, independently
+observed. That's the test this kind of mental model has to pass to be worth
+writing down.
+
 ## Watch it decide
 
 Don't take the cost model's word for it; it will happily show you its choices.
@@ -901,5 +968,17 @@ Claims about NCCL internals are checked against the NCCL master source at commit
 - [aws-ofi-nccl](https://github.com/aws/aws-ofi-nccl), the plugin NCCL uses on
   AWS EFA, whose [release notes](https://github.com/aws/aws-ofi-nccl/releases)
   track when LL and LL128 stopped being disabled on p5-class instances.
+- [Demystifying NCCL: An In-depth Analysis of GPU Communication Protocols and
+  Algorithms](https://arxiv.org/abs/2507.04786), Hu et al. Independent
+  microbenchmarks of the protocols and algorithms this post describes, against
+  NCCL 2.19.
+- [The Llama 3 Herd of Models](https://arxiv.org/abs/2407.21783), the source
+  for the 16K-GPU RoCE training setup and the NCCLX collective-communication
+  changes discussed above.
+- [Kimi K3: Open Frontier Intelligence](https://arxiv.org/abs/2607.24653), the
+  source for the histogram all-reduce and the decomposed tensor-parallel
+  all-reduce quoted above, and
+  [DeepSeek-V3](https://arxiv.org/abs/2412.19437) for the all-to-all-centric
+  side of mixture-of-experts communication.
 - [NCCL environment variables](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html),
   including `NCCL_ALGO`, `NCCL_PROTO`, and the debug switches used above.
