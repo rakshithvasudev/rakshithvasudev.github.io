@@ -873,8 +873,11 @@ compute kernel inserted between the two halves and a norm fused into the
 collective itself: the identity this post opened with, used as a seam to hide
 work in. One honest caveat for reading modern reports: in mixture-of-experts
 training the bulkiest traffic has moved to all-to-all expert dispatch (K3's
-MoonEP, and the pipeline co-design in DeepSeek-V3's report), which is a
-different collective with different math and deserves its own post. Gradient
+MoonEP, the pipeline co-design in DeepSeek-V3's report, and GLM-5's
+hierarchical all-to-all that splits the intra-node and inter-node halves,
+which is the same fabric-level split as NCCL's chain-inside-node,
+tree-across-nodes construction). That's a different collective with different
+math and deserves its own post. Gradient
 sync and tensor parallelism still run on the reduce-scatter, all-gather, and
 all-reduce described here.
 
@@ -978,7 +981,8 @@ Claims about NCCL internals are checked against the NCCL master source at commit
 - [Kimi K3: Open Frontier Intelligence](https://arxiv.org/abs/2607.24653), the
   source for the histogram all-reduce and the decomposed tensor-parallel
   all-reduce quoted above, and
-  [DeepSeek-V3](https://arxiv.org/abs/2412.19437) for the all-to-all-centric
-  side of mixture-of-experts communication.
+  [DeepSeek-V3](https://arxiv.org/abs/2412.19437) and
+  [GLM-5](https://arxiv.org/abs/2602.15763) for the all-to-all-centric side of
+  mixture-of-experts communication.
 - [NCCL environment variables](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html),
   including `NCCL_ALGO`, `NCCL_PROTO`, and the debug switches used above.
