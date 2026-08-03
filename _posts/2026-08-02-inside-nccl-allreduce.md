@@ -216,7 +216,7 @@ deliver. That's `2(n-1)`, and the ring's real trick is visible in the diagram: a
 every link is busy every step and no step is wasted on data anyone already has.
 
 To be clear about what's optimal here: the step count isn't. A tree can finish a
-sum in logarithmic depth, and that's the entire next act of this post. The bytes
+sum in logarithmic depth, and that's where this post goes next. The bytes
 are what's optimal: every hop carries fresh, never-repeated data, so each GPU
 sends `(2(n-1)/n) * S` total for an `S`-byte buffer, a hair under `2S`, which is
 the proven floor for any all-reduce however clever. Latency linear, bandwidth
@@ -245,7 +245,7 @@ for (int j = 1; j < nranks - 1; ++j)
 prims.directRecv(offset, nelem);
 ```
 
-Those primitive names are the vocabulary the whole library is written in.
+Those primitive names are the vocabulary the rest of NCCL is written in.
 `recvReduceSend` means "receive from my ring predecessor, add my contribution,
 send the result to my successor", and it happens as one fused operation: data
 streams from the receive buffer through the adds and out the send buffer without a
@@ -378,7 +378,7 @@ it's 2046 hops, and that cost is paid even by a 4-byte all-reduce, because hops 
 hops regardless of size. Bandwidth optimal, latency linear. For big gradient buckets
 the pipeline hides it; for the small, frequent all-reduces that show up everywhere
 in real systems (loss scalars, norms, router statistics, anything at high world
-size) the alpha term is the whole cost.
+size) the alpha term dominates everything else.
 
 The fix is old: reduce up a tree, broadcast back down. Latency becomes logarithmic
 in the number of nodes. The problem that kept trees out of NCCL for years is
@@ -398,7 +398,7 @@ parent. Nodes with no children are leaves; everything between the leaves and the
 root is an interior node. The property that makes trees worth the bother: a
 balanced binary tree over n nodes is only about log2(n) levels deep, so a
 message can climb from any node to the root in log2(n) hops. Around a ring, the
-same trip can take n-1. That gap is the entire reason this section exists: 1024
+same trip can take n-1. That gap is what the tree buys: 1024
 nodes is ten hops up a tree and 1023 around a ring.
 
 Map communication onto the structure and the two motions you get are exactly the
@@ -545,7 +545,7 @@ ring:  2(nRanks-1) hops:  (2(nRanks-1) - 2(nNodes-1)) intra-node
 tree:  2((ranksPerNode-1) intra-node + log2(nNodes) network hops)
 ```
 
-That last line is the whole tree story in one expression: the network term, the
+Read the last line closely: the network term, the
 expensive one, went from linear in nodes to logarithmic. At 16 nodes, ring pays 30
 network-latency units, tree pays 8. At 128 nodes it's 254 versus 14. Meanwhile the
 bandwidth table charges the tree for its structural overheads (a factor around 0.9,
