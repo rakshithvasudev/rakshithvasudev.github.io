@@ -391,6 +391,26 @@ tree solves.
 
 ## The double binary tree
 
+First, a thirty-second recap of the data structure itself, since most of us last
+drew one in a classroom. A binary tree is a set of nodes in which each node has
+at most two children, and every node except one, the root, has exactly one
+parent. Nodes with no children are leaves; everything between the leaves and the
+root is an interior node. The property that makes trees worth the bother: a
+balanced binary tree over n nodes is only about log2(n) levels deep, so a
+message can climb from any node to the root in log2(n) hops. Around a ring, the
+same trip can take n-1. That gap is the entire reason this section exists: 1024
+nodes is ten hops up a tree and 1023 around a ring.
+
+Map communication onto the structure and the two motions you get are exactly the
+halves of an all-reduce. Send data from the leaves toward the root, each parent
+adding what its children deliver before passing the total on, and by the time it
+arrives at the root you have reduced. Push the result from the root back down,
+each node handing copies to its children, and you have broadcast. One difference
+from the trees you may remember from algorithms class: here every node holds
+data, not just the leaves. Every GPU is a node somewhere in the tree, adds its
+own values to whatever flows up through it, and keeps a copy of whatever flows
+down.
+
 NCCL builds the tree in [`src/graph/trees.cc:32`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/trees.cc#L32) with a bit trick: a rank's lowest
 set bit fixes its depth, and a couple of integer operations on that bit produce
 its parent (clear it, set the next bit up, with a fallback at the edge of the
