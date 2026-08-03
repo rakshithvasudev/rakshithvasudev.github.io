@@ -9,7 +9,7 @@ In the [last post](/2026/07/26/fsdp-collectives-101.html) I said the standard ri
 all-reduce is literally a reduce-scatter and an all-gather run back to back. That's
 true, and it's also where most explanations stop, mine included. It left me with a
 picture of one algorithm, the ring, faithfully executed every time someone calls
-`ncclAllReduce`. So I cloned NCCL (pronounced "nickel", version 2.30, current master)
+`ncclAllReduce`. So I cloned NCCL (version 2.30, current master)
 and read the implementation, and the picture underneath is much better than the one I
 was carrying. NCCL doesn't have an all-reduce algorithm. It has six, plus three
 different wire protocols to run them over, and it prices every valid combination with
@@ -533,7 +533,7 @@ node count. No threshold anywhere; it falls out of two lines crossing.
 <text x="608" y="56" text-anchor="end" font-size="11.5" fill="#5b6ee1" stroke="#fafafa" stroke-width="3" paint-order="stroke">tree: bandwidth derated</text>
 <text x="255" y="200" text-anchor="middle" font-size="10.5" fill="#888">tree wins here</text>
 <text x="555" y="200" text-anchor="middle" font-size="10.5" fill="#888">ring wins here</text>
-<text x="350" y="248" text-anchor="middle" font-size="10" fill="#999">shape of the model, not a measurement; the crossover moves right as node count grows</text>
+<text x="350" y="248" text-anchor="middle" font-size="10" fill="#999">drawn from the cost formulas, not measured; the crossover moves right as node count grows</text>
 </svg>
 </div>
 
@@ -707,8 +707,8 @@ does the adds, and who moves the bytes".
 ## What your hardware takes off the menu
 
 Everything above described the full menu, and if you're on older or plainer
-hardware you may reasonably ask which parts still apply to you. The answer has a
-clean shape, because every algorithm row and protocol column is really a bet on
+hardware you may reasonably ask which parts still apply to you. Almost all of
+it, because every algorithm row and protocol column is really a bet on
 one specific hardware capability, and the machinery for missing capabilities is
 the one you've already seen: the row's bandwidth entry reads zero, and the
 argmin simply never considers it. There is no "cloud mode" or "legacy mode"
@@ -787,7 +787,7 @@ AllReduce: 8388608 Bytes -> Algo Ring proto LL128 channel{Lo..Hi}={0..15}
 AllReduce: 268435456 Bytes -> Algo NVLS proto Simple channel{Lo..Hi}={0..15}
 ```
 
-(Those three lines are the shape to expect on a single Hopper node; your sizes and
+(Those three lines are typical of a single Hopper node; your sizes and
 winners will differ, which is rather the point.) Sweep sizes with `-b`/`-e`/`-f`
 and you can watch the argmin walk the menu: LL to LL128 to Simple, tree to ring to
 switch. Then pin `NCCL_ALGO=Ring NCCL_PROTO=Simple`, rerun the sweep, and compare
