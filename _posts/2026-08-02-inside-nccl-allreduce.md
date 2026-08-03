@@ -10,8 +10,8 @@ all-reduce is literally a reduce-scatter and an all-gather run back to back. Tha
 true, and it's also where most explanations stop, mine included. It left me with a
 picture of one algorithm, the ring, faithfully executed every time someone calls
 `ncclAllReduce`. So I cloned NCCL (version 2.30, current master)
-and read the implementation, and the picture underneath is much better than the one I
-was carrying. NCCL doesn't have an all-reduce algorithm. It has six, and three wire
+and read the implementation (with the help of my preferred agent of the day :D),
+and the picture underneath is much better than the one I was carrying. NCCL doesn't have an all-reduce algorithm. It has six, and three wire
 protocols to carry them. Each time you call it, it estimates how long every
 valid pairing would take on your message and your hardware, then runs the
 fastest one. The ring you learned from
