@@ -920,17 +920,32 @@ entire latency and bandwidth table it computed for your exact topology. Then, fo
 every collective, you get one line from [`src/enqueue.cc:822`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L822) naming the winner:
 
 ```
-AllReduce: 4096 Bytes -> Algo TREE proto LL channel{Lo..Hi}={0..1}
-AllReduce: 8388608 Bytes -> Algo RING proto LL128 channel{Lo..Hi}={0..15}
-AllReduce: 268435456 Bytes -> Algo NVLS proto SIMPLE channel{Lo..Hi}={0..15}
+AllReduce: 4096 Bytes -> Algo RING proto LL channel{Lo..Hi}={0..0}
+AllReduce: 1048576 Bytes -> Algo RING proto LL channel{Lo..Hi}={0..23}
+AllReduce: 2097152 Bytes -> Algo NVLS proto SIMPLE channel{Lo..Hi}={0..15}
 ```
 
-(Those three lines are typical of a single Hopper node; your sizes and
-winners will differ, which is rather the point.) Sweep sizes with `-b`/`-e`/`-f`
-and you can watch the argmin walk the menu: LL to LL128 to Simple, tree to ring to
-switch. Then pin `NCCL_ALGO=Ring NCCL_PROTO=Simple`, rerun the sweep, and compare
-the small-message latencies against the free choice. That gap is the cost model
-earning its keep.
+Those lines are measured, not invented: a single 8x H100 node, NCCL 2.30.7 built
+from the same commit every file reference in this post points at, swept from 256 B
+to 4 GiB. The walk on this machine is simpler than the full menu: ring with LL up
+to 1 MiB, then straight to the switch from 2 MiB on, everything on Simple after
+that. No tree at any size, which the chain-inside-the-node section predicted. No
+LL128 window either; NVLS arrives before LL stops winning. The same sweep on an
+8x H200 node decides identically, which is its own small lesson: the crossovers
+follow the interconnect, and these two machines share their NVSwitch generation.
+Your fabric will draw its own map, which is rather the point.
+
+Then pin `NCCL_ALGO=Ring NCCL_PROTO=Simple`, rerun the sweep, and the cost model's
+keep is a number. At 1 MiB the pinned run takes 112 microseconds against the free
+choice's 61: the flag protocol is worth 45 percent right in the awkward middle
+band. At 4 GiB the pinned ring moves 366 GB/s of bus bandwidth while the free
+choice, on the switch by then, moves 475: about 30 percent for the hardware doing
+the math, against the doubled bandwidth the cost table promises it. And one more
+sweep pays off the post's opening claim in wall clock: at 4 GiB,
+`reduce_scatter_perf` plus `all_gather_perf` sum to 20,968 microseconds and the
+ring all-reduce runs 20,537. The identity holds to within two percent on real
+wires. NVLS does the same job in 15,808, which is the measured value of not being
+made of those two halves.
 
 ## The mental model that replaced mine
 
