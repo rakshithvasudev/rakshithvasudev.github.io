@@ -706,7 +706,9 @@ traffic, one pass up and one pass down per byte on each GPU's link. That's the
 actual win over the ring, where each link carries every byte roughly twice in
 each direction: NVLS halves per-link traffic, which is why the cost model
 credits all-reduce with doubled NVLS bandwidth (`intraBw *= 2.0f` in
-[`src/graph/tuning.cc:315`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L315)). And in the common unregistered path the scatter and
+[`src/graph/tuning.cc:315`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L315)). Measured on my
+nodes the end-to-end advantage over the best ring is about 30 percent at 4 GiB,
+not 2x; the numbers are in the last section. And in the common unregistered path the scatter and
 gather warp teams still stage your data into the multicast buffers with plain
 copies. Reductions the switch can't express never leave the GPU at all: the
 multimem path covers sums and min/max only (`ncclNvlsSupported`,
@@ -935,17 +937,45 @@ LL128 window either; NVLS arrives before LL stops winning. The same sweep on an
 follow the interconnect, and these two machines share their NVSwitch generation.
 Your fabric will draw its own map, which is rather the point.
 
-Then pin `NCCL_ALGO=Ring NCCL_PROTO=Simple`, rerun the sweep, and the cost model's
-keep is a number. At 1 MiB the pinned run takes 112 microseconds against the free
-choice's 61: the flag protocol is worth 45 percent right in the awkward middle
-band. At 4 GiB the pinned ring moves 366 GB/s of bus bandwidth while the free
-choice, on the switch by then, moves 475: about 30 percent for the hardware doing
-the math, against the doubled bandwidth the cost table promises it. And one more
-sweep pays off the post's opening claim in wall clock: at 4 GiB,
-`reduce_scatter_perf` plus `all_gather_perf` sum to 20,968 microseconds and the
-ring all-reduce runs 20,537. The identity holds to within two percent on real
-wires. NVLS does the same job in 15,808, which is the measured value of not being
-made of those two halves.
+Then pin things and rerun, and each layer's contribution becomes a number. Pin the
+algorithm to ring both times and flip only the protocol, and you get the price of
+the fence (all numbers here are the in-place halves, the PyTorch gradient case, on
+the H100 node):
+
+| size | ring, protocol free (picks LL) | ring, Simple forced |
+|---|---|---|
+| 64 KiB | 50 us | 76 us |
+| 1 MiB | 61 us | 112 us |
+| 8 MiB | 79 us, 186 GB/s | 140 us, 105 GB/s |
+
+The flag protocol is worth 45 percent at 1 MiB, right in the awkward middle band.
+At 256 B both sit on the same ~50 microsecond launch floor; single node, so the
+latency drama the tree section promised needs node counts to appear.
+
+Let the argmin run free and the large sizes leave the ring for the switch, which
+is worth this much bus bandwidth:
+
+| size | free choice (NVLS) | best ring |
+|---|---|---|
+| 32 MiB | 289 GB/s | 279 GB/s |
+| 128 MiB | 399 GB/s | 333 GB/s |
+| 4 GiB | 475 GB/s | 366 GB/s |
+
+A near tie where NVLS first takes over, growing to 30 percent at full size,
+against the doubled bandwidth the cost table promises. The H200 node lands within
+a few GB/s of every number here.
+
+And one more sweep pays off the post's opening claim in wall clock. Run the two
+halves separately and compare against running them fused:
+
+```
+4 GiB, in place:   reduce-scatter  10,506 us  +  all-gather  10,462 us  =  20,968 us
+                   ring all-reduce                                         20,537 us
+                   NVLS all-reduce                                         15,808 us
+```
+
+The identity holds to within two percent on real wires. And NVLS beats it by a
+quarter, which is the measured value of not being made of those two halves.
 
 ## The mental model that replaced mine
 
