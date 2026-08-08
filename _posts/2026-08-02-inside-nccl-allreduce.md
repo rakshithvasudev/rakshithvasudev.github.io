@@ -15,10 +15,19 @@ and the picture underneath is much better than the one I was carrying. NCCL does
 protocols to carry them. Each time you call it, it estimates how long every
 valid pairing would take on your message and your hardware, then runs the
 fastest one. The ring you learned from
-the classic blog posts is just one row of that menu, and on an H100 machine with an
-NVLink switch it stops being the pick once messages get large: the estimate starts
+the classic blog posts is just one row of that menu, and on the 8x H100 machine I
+measured, it stops being the pick once messages get large: the estimate starts
 favoring an algorithm in which no GPU addresses any other GPU, because the switch
 hardware does the arithmetic.
+
+Said as three plain claims, since the whole post is really me testing them. One:
+there is no best all-reduce, only a best all-reduce for this message on this
+machine. Two: NCCL behaves like a planner, in the sense a database means the word.
+The hardware decides which algorithm and protocol pairings are legal, and a cost
+model estimates each pairing's runtime and picks a winner, per call. Three: what
+the winner mostly trades is fixed per-operation latency against sustained data
+movement, right up until hardware appears that shifts the trade itself by doing
+the reduction inside the switch.
 
 This post is a guided tour of that machinery, with file and line references into the
 source so you can check everything I claim. Everything below is from NCCL 2.30
@@ -219,9 +228,11 @@ To be clear about what's optimal here: the step count isn't. A tree can finish a
 sum in logarithmic depth, and that's where this post goes next. The bytes
 are what's optimal: every hop carries fresh, never-repeated data, so each GPU
 sends `(2(n-1)/n) * S` total for an `S`-byte buffer, a hair under `2S`, which is
-the proven floor for any all-reduce however clever. Latency linear, bandwidth
-optimal. Keep that trade in your head; the rest of this post is NCCL renegotiating
-it from every direction.
+the proven floor for any all-reduce built out of point-to-point sends between
+endpoints, however clever. Hold onto that qualifier about endpoints; hardware
+shows up later in this post that changes the assumption it rests on. Latency
+linear, bandwidth optimal. Keep that trade in your head; the rest of this post is
+NCCL renegotiating it from every direction.
 
 And it really is fused, not two calls. The whole thing is one loop in the device
 kernel, `runRing` in [`src/device/all_reduce.h:14`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L14). Trimmed to its skeleton:
@@ -262,12 +273,15 @@ NCCL carves the buffer across many independent rings.
 
 ## Channels: the ring is plural
 
-A "channel" is NCCL's unit of parallelism: one CUDA thread block, on one SM, with
-its own ring order, its own FIFO buffers, and its own slice of the input
-(`grid.x` is exactly the channel count, [`src/enqueue.cc:1758`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L1758)). A fabric moving
-hundreds of gigabytes per second can't be saturated by one thread block doing
-loads and stores, so NCCL runs up to 64 channels (`MAXCHANNELS`,
-[`src/include/device.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h)) and splits every collective across them. The ring orderings themselves come out of a topology search
+A "channel" is one independent copy of the whole communication pipeline: its own
+ring order, its own FIFO buffers, its own slice of the input, driven by its own
+CUDA thread block on its own SM. Channels exist because one thread block doing
+loads and stores cannot come close to saturating a fabric that moves hundreds of
+gigabytes per second, so NCCL runs up to 64 of these pipelines side by side
+(`MAXCHANNELS`,
+[`src/include/device.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h)) and splits every collective across them. The channel
+count is literally the kernel's launch geometry: `grid.x` is the number of
+channels ([`src/enqueue.cc:1758`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/enqueue.cc#L1758)). The ring orderings themselves come out of a topology search
 ([`src/graph/search.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/search.cc)) that walks the PCIe/NVLink/NIC graph at init time looking
 for orderings that maximize per-channel bandwidth, which is why the ring order
 rarely matches rank order.
@@ -283,8 +297,11 @@ same worry transfers here, sharpened. Eight ranks all-reduce a 10 GB gradient, s
 over the course of the collective each GPU receives many gigabytes of other GPUs'
 partial sums. Where does all of that land? If your instinct says "some staging
 buffer proportional to the message", all-reduce should be scary. It isn't, and the
-reason is worth having precisely, because it's the same streaming discipline every
-algorithm in this post shares.
+short answer is that the gigabytes never live anywhere as a whole: data streams
+through a handful of fixed-size reusable transfer slots, and the tensor's size
+only determines how long the stream runs, never how wide the staging window gets.
+The precise version is worth having, because it's the same streaming discipline
+every algorithm in this post shares.
 
 First, nothing proportional to the message is ever allocated, because arriving
 data is consumed the moment it lands. Look at the ring loop again: the workhorse
@@ -371,6 +388,9 @@ network's direct modes) push this to its logical end: even the fixed staging cop
 disappears, and the hardware reads your tensors where they sit.
 
 ## Where the ring hurts
+
+If the ring moves the fewest bytes any all-reduce can, why would NCCL ever run
+anything else? Because bytes are only half of the bill.
 
 Count the steps again: `2(k-1)`, and they're sequential. Each chunk's sum isn't done
 until it has physically visited every rank. On 8 GPUs that's 14 hops. On 1024 GPUs
@@ -529,6 +549,15 @@ own contribution in registers as they stream through
 so nothing accumulates anywhere. More neighbors costs a few more megabytes of
 staging, never anything proportional to the tensor.
 
+The clean way to carry the ring-versus-tree comparison out of these two sections:
+the ring is extremely efficient at steady-state data movement, but its dependency
+chain grows linearly with participants; the tree gives up some practical
+sustained throughput (the tuning model derates it, as you're about to see) to
+make that chain logarithmic. Small and frequent leans latency, huge and rare
+leans bandwidth. Those are tendencies, not rules, and that's precisely the
+problem: NCCL now holds two legitimate algorithms for the same collective. How
+does it decide, call by call?
+
 ## How NCCL picks: a cost model, not a threshold
 
 Old NCCL had `NCCL_TREE_THRESHOLD`. It was removed in 2.5, and what replaced it is
@@ -560,6 +589,16 @@ bandwidth table charges the tree for its structural overheads (a factor around 0
 plus per-architecture ceilings), so the model naturally produces the classic
 picture: tree wins small, ring wins large, and the crossover slides upward with
 node count. No threshold anywhere; it falls out of two lines crossing.
+
+Notice that two independent dials moved in that story, and it pays to keep them
+separate. Message size moves the bytes-over-bandwidth term: more bytes, more
+reason to care about sustained throughput. Node count moves the latency term:
+more nodes, and the gap between the ring's roughly linear network path and the
+tree's logarithmic one widens. Growing the cluster makes the tree competitive
+across a wider range of sizes; it does not make the tree win. A large enough
+message still goes to whichever plan moves bytes fastest, which might be the
+ring, or, later in this post, the switch. The model computes each crossover from
+both dials; it never assumes one.
 
 <div style="text-align:center">
 <svg viewBox="0 0 680 270" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Sketch of the cost model: time versus message size for tree and ring, with tree cheaper at small sizes and ring cheaper at large sizes">
@@ -608,8 +647,12 @@ cluster.
 
 The same argmin also picks the wire protocol, and this layer was completely new to
 me. The algorithm says who talks to whom; the protocol says what a message
-physically looks like, and it exists because of a synchronization problem: how does
-the receiver know the data in the FIFO slot is ready?
+physically looks like on the wire and how the receiver learns it has arrived. So a
+full plan is a pair, Ring plus LL, Ring plus Simple, Tree plus LL128, and the
+protocols are not three more algorithms: any algorithm can ride any protocol the
+path supports, and the argmin prices the pairs. The protocol layer exists because
+of a synchronization problem: how does the receiver know the data in the FIFO
+slot is ready?
 
 **Simple** is the obvious design. Write the payload, execute a memory fence, then
 bump a tail counter the receiver is polling ([`src/device/prims_simple.h:164`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_simple.h#L164)). Full
@@ -668,7 +711,9 @@ reducing and links do the moving. On Hopper and newer machines with NVSwitch, th
 switch itself can reduce, and NCCL's fastest single-node algorithm is built on
 that. NVIDIA calls it NVLink SHARP; in the code it's `NCCL_ALGO_NVLS`.
 
-The mechanism sits on CUDA multicast memory. At init, every local GPU binds
+The mechanism sits on CUDA multicast memory: one virtual address range that names
+a group of physical memories, one per GPU, so that a single load or store can
+address all of them at once. At init, every local GPU binds
 NCCL's staging buffers into a shared multicast object (`cuMulticastCreate`,
 [`src/transport/nvls.cc:60`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/nvls.cc#L60); registering your own tensors later binds them into a
 second object of their own). Each GPU then holds two kinds of pointer: a unicast
@@ -706,7 +751,10 @@ traffic, one pass up and one pass down per byte on each GPU's link. That's the
 actual win over the ring, where each link carries every byte roughly twice in
 each direction: NVLS halves per-link traffic, which is why the cost model
 credits all-reduce with doubled NVLS bandwidth (`intraBw *= 2.0f` in
-[`src/graph/tuning.cc:315`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L315)). Measured on my
+[`src/graph/tuning.cc:315`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L315)). It's also why the 2S floor from the ring section
+doesn't constrain this: that bound was derived for endpoints exchanging
+point-to-point messages, and a switch that sums in transit isn't beating the
+bound, it's playing outside the assumptions the bound was built on. Measured on my
 nodes the end-to-end advantage over the best ring is about 30 percent at 4 GiB,
 not 2x; the numbers are in the last section. And in the common unregistered path the scatter and
 gather warp teams still stage your data into the multicast buffers with plain
@@ -750,14 +798,21 @@ is GPU ALUs touching the reduction and any software notion of a peer.
 </svg>
 </div>
 
-In the cost tables NVLS carries a high fixed latency (25 microseconds in
+Which raises the obvious question: if the switch can do the math, why wouldn't
+NCCL always use it? Because capability only puts the row on the menu; it doesn't
+win the argmin. In the cost tables NVLS carries a high fixed latency (25
+microseconds in
 [`src/graph/tuning.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc), versus 3.4 for a ring hop over NVLink) and a bandwidth
 entry that gets doubled for all-reduce because the reduce-in and broadcast-out
-directions pipeline through the switch simultaneously. So tiny all-reduces still
-go to LL rings or trees, and big single-node ones go to the switch.
+directions pipeline through the switch simultaneously. Add the operator
+restriction from above (a floating point average can't ride it) and the fact
+that the bytes still have to move, and the switch is just another candidate with
+its own constants, priced against everything else per call. So tiny all-reduces
+still go to LL rings or trees, and big single-node ones go to the switch.
 
 The same idea exists between nodes. InfiniBand switches with SHARP can reduce in
-the network too, and NCCL reaches them through its CollNet plugin: the proxy
+the network too, and NCCL reaches them through CollNet, its generic interface for
+a network that can run collectives itself rather than merely deliver bytes: the proxy
 literally calls `iallreduce` on the network ([`src/transport/coll_net.cc:815`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/coll_net.cc#L815)) and
 gets back fully reduced data, no inter-node ring or tree traffic at all. And the
 hybrids compose exactly like you'd hope: multi-node NVLS uses the NVSwitch for
@@ -771,10 +826,11 @@ does the adds, and who moves the bytes".
 
 Everything above described the full menu, and if you're on older or plainer
 hardware you may reasonably ask which parts still apply to you. Almost all of
-it, because every algorithm row and protocol column is really a bet on
-one specific hardware capability, and the machinery for missing capabilities is
-the one you've already seen: the row's bandwidth entry reads zero, and the
-argmin simply never considers it. There is no "cloud mode" or "legacy mode"
+it. Hardware does exactly two things to the planner: it sets the constants in
+the cost tables, and it decides which plans are legal at all. Every algorithm
+row and protocol column is really a bet on one specific hardware capability, and
+the machinery for a missing capability is the one you've already seen: the row's
+bandwidth entry reads zero, and the argmin simply never considers it. There is no "cloud mode" or "legacy mode"
 anywhere in NCCL; there are only capabilities present or absent.
 
 The bets, one per row:
@@ -813,11 +869,14 @@ from the network at all.
 Cloud fabrics slot into the same table rather than getting special treatment.
 AWS's EFA, to take the biggest one, has no in-network reduction and no CollNet
 plugin, so it's the "moves bytes, does no math" row above. Its one extra wrinkle
-is the LL128 bet: EFA's transport delivers out of order by design, so the
+is the LL128 bet, and it's a clean example of capability framing, because the
+answer changed over the years without NCCL changing at all. LL128 is legal only
+where the transport can promise that a 128-byte write lands whole and in order.
+EFA's base transport makes no such promise, so the
 [plugin](https://github.com/aws/aws-ofi-nccl) historically exported
 `NCCL_PROTO=simple` to protect you, zeroing the fast-protocol rows through the
-same mask as everything else; on current instance generations it can promise
-in-order 128-byte writes and stopped doing so. And because such fabrics
+same mask as everything else; on instance generations where the plugin can make
+the guarantee, it stopped doing so. And because such fabrics
 typically carry a higher per-message latency than InfiniBand, which enters the
 model through the NIC latency added to every inter-node hop
 (`graphs->latencyInter`, [`src/graph/tuning.cc:389`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L389)), the ring's
@@ -833,23 +892,33 @@ PCIe box from 2018 or on whatever ships next year.
 ## How this survives ten thousand GPUs
 
 Everything above was worked out on a whiteboard, three GPUs here, a node
-there. NCCL running the biggest jobs in the world is not news; that's its day
-job. What I actually wanted to know is which of these mechanisms does the
-heavy lifting up there, and what gives out first. Three papers answer that,
-and reading them after tracing the source is a different experience than
-reading them before.
+there. Does any of it still matter when the job has thousands of GPUs, or does
+scale wash the tuning machinery out? It matters more, and the pattern across
+the frontier reports fits in one sentence: at extreme scale, collective
+communication stops being a library implementation detail and becomes an input
+to model and system architecture. NCCL running the biggest jobs in the world
+is not news; that's its day job. What I actually wanted to know is which of
+these mechanisms does the heavy lifting up there, and what gives out first.
+Three papers answer that, and reading them after tracing the source is a
+different experience than reading them before.
 
 Do one division before anything else, because it rearranged how I read all
 three. The ring cuts the buffer into n chunks. Across 16,384 ranks, a 1 GiB
-gradient bucket, the kind that feels enormous, is a 64 KiB chunk per rank.
-64 KiB sits squarely in the awkward middle band where the latency term and
-the tree correction factor live. At that scale there is no such thing as a
-large message, not from any single rank's point of view. So the parts of this
-post that looked like small-message footnotes, the trees, LL and LL128, the
-switch offload, are the parts carrying frontier jobs, and the ring keeps only
-the traffic that stays genuinely huge per rank.
+gradient bucket, the kind that feels enormous, is a 64 KiB chunk per rank. To
+be precise about what that does and does not mean: NCCL still prices the
+operation as a 1 GiB collective; the per-rank chunk is not what goes into the
+cost tables. What the division changes is the physical texture of the work,
+tiny slices whose per-hop overheads and pipelining behavior matter the way
+small messages always have. And the dominant scaling pressure sits in the
+latency column regardless: the ring's inter-node stage count grows roughly
+linearly with node count while the tree's grows logarithmically, so every
+added node argues a little harder for the low-depth plans. That's why the
+parts of this post that looked like small-message footnotes, the trees, LL
+and LL128, the switch offload, are the parts carrying frontier jobs, and the
+ring keeps the traffic that stays genuinely huge.
 
-That division is also why the double binary tree got built. NVIDIA shipped it
+The first thing scale changed was NCCL itself: the ring's linear latency growth
+became unacceptable, so the library grew a new algorithm. NVIDIA shipped it
 with measurements
 ([the NCCL 2.4 announcement](https://developer.nvidia.com/blog/massively-scale-deep-learning-training-nccl-2-4/),
 latency plot in figure 3): on Summit, at up to 24,576 GPUs, small-message
@@ -900,6 +969,11 @@ collective with different math, and it deserves its own post. Gradient sync
 and tensor parallelism still run on the reduce-scatter, all-gather, and
 all-reduce described here.
 
+The pattern across all four systems is not that one collective dominates, or
+that one trick keeps winning. It's that at this scale, communication structure
+becomes something designers co-design with the computation, instead of
+something a library quietly handles underneath it.
+
 And when you want measured curves instead of my sketches,
 ["Demystifying NCCL"](https://arxiv.org/abs/2507.04786) (2025, revised 2026) benchmarks all
 three protocols and both algorithms across message sizes and cluster sizes
@@ -910,7 +984,11 @@ machinery, measured by people with no stake in the cost model being right.
 ## Watch it decide
 
 Don't take the cost model's word for it; it will happily show you its choices.
-Two env vars make NCCL's tuning layer chatty:
+Before looking, write down what everything so far predicts for a single 8-GPU
+Hopper node: the tree has no expensive network depth to dodge, so it should
+never win here; tiny messages should ride the ring on a low-latency protocol;
+and once sizes are large enough to amortize the switch's 25 microsecond entry
+fee, NVLS should take the rest. Two env vars make NCCL's tuning layer chatty:
 
 ```
 NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=TUNING ./build/all_reduce_perf -b 256 -e 1G -f 2 -g 8
@@ -935,12 +1013,15 @@ that. No tree at any size, which the chain-inside-the-node section predicted. No
 LL128 window either; NVLS arrives before LL stops winning. The same sweep on an
 8x H200 node decides identically, which is its own small lesson: the crossovers
 follow the interconnect, and these two machines share their NVSwitch generation.
-Your fabric will draw its own map, which is rather the point.
+Your fabric will draw its own map, which is rather the point. Against the
+predictions written down above: three for three, with the missing LL128 window
+as the one detail the hand-waved version didn't see coming and the argmin did.
 
 Then pin things and rerun, and each layer's contribution becomes a number. Pin the
-algorithm to ring both times and flip only the protocol, and you get the price of
-the fence (all numbers here are the in-place halves, the PyTorch gradient case, on
-the H100 node):
+algorithm to ring both times and flip only the protocol: with the algorithm held
+constant, whatever difference appears is purely the synchronization scheme, the
+fence against the flags, nothing else. That is the price of the fence (all numbers
+here are the in-place halves, the PyTorch gradient case, on the H100 node):
 
 | size | ring, protocol free (picks LL) | ring, Simple forced |
 |---|---|---|
@@ -953,8 +1034,11 @@ At 256 B both sit on the same ~50 microsecond launch floor; single node, so the
 latency drama the tree section promised needs node counts to appear. It appears
 one section down.
 
-Let the argmin run free and the large sizes leave the ring for the switch, which
-is worth this much bus bandwidth:
+Now let the argmin run free again, so the algorithm itself may change. This
+experiment asks a different question from the last one: does moving the
+reduction into the switch pay, and does it pay more as the payload grows? The
+large sizes leave the ring for the switch, which is worth this much bus
+bandwidth:
 
 | size | free choice (NVLS) | best ring |
 |---|---|---|
@@ -963,8 +1047,10 @@ is worth this much bus bandwidth:
 | 4 GiB | 475 GB/s | 366 GB/s |
 
 A near tie where NVLS first takes over, growing to 30 percent at full size,
-against the doubled bandwidth the cost table promises. The H200 node lands within
-a few percent of every number here.
+against the doubled bandwidth the cost table promises. The growth pattern is the
+bandwidth term of the model earning its keep: as bytes grow, the switch's fixed
+entry fee stops mattering and only its halved per-link traffic remains. The H200
+node lands within a few percent of every number here.
 
 And one more sweep pays off the post's opening claim in wall clock. Run the two
 halves separately and compare against running them fused:
@@ -1046,8 +1132,11 @@ What I had before reading the source: "NCCL does ring all-reduce."
 
 What I have now:
 
-- All-reduce is a menu, not an algorithm: six who-does-what structures times three
-  wire protocols, priced per call by `latency + bytes/bandwidth`, cheapest wins.
+- `ncclAllReduce` is a request, not an algorithm. A planner prices six
+  who-does-what structures times three wire protocols against your message,
+  your topology, and your transport's capabilities, `latency + bytes/bandwidth`,
+  cheapest wins, and launches that physical plan. Sometimes the plan is the
+  ring. Sometimes it's a tree. Sometimes the switch does the math.
 - The ring is built from five primitives (`send`, `recvReduceSend`,
   `recvReduceCopySend`, `recvCopySend`, `recv`), and the tree reuses the same
   set plus two more for its root; the reduce-scatter plus all-gather structure
