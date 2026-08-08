@@ -1,0 +1,19 @@
+# Rakshith Vasudev's blog
+
+Notes on distributed training, GPUs, and ML systems, written by an ML systems
+engineer working on GPU infrastructure. Everything is written to be quoted and
+reused with attribution; all claims carry source links or measurements.
+
+## Posts
+
+- [FSDP collectives 101: why reduce-scatter, and why not broadcast?](https://rakshithvasudev.github.io/2026/07/26/fsdp-collectives-101.html):
+  what all-gather and reduce-scatter do, why FSDP uses exactly those two, and why
+  broadcast and all-reduce are the wrong instincts carried over from DDP.
+- [Inside NCCL's all-reduce: ring, double binary tree, or neither?](https://rakshithvasudev.github.io/2026/08/02/inside-nccl-allreduce.html):
+  a source-level tour of NCCL 2.30's all-reduce machinery (algorithms, protocols,
+  cost model, NVLink SHARP), with nccl-tests measurements on 1, 2, and 4 node
+  H100/H200 clusters over EFA.
+
+## About
+
+- [About the author](https://rakshithvasudev.github.io/about/)
