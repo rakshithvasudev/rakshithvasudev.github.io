@@ -950,7 +950,8 @@ the H100 node):
 
 The flag protocol is worth 45 percent at 1 MiB, right in the awkward middle band.
 At 256 B both sit on the same ~50 microsecond launch floor; single node, so the
-latency drama the tree section promised needs node counts to appear.
+latency drama the tree section promised needs node counts to appear. It appears
+one section down.
 
 Let the argmin run free and the large sizes leave the ring for the switch, which
 is worth this much bus bandwidth:
@@ -963,7 +964,7 @@ is worth this much bus bandwidth:
 
 A near tie where NVLS first takes over, growing to 30 percent at full size,
 against the doubled bandwidth the cost table promises. The H200 node lands within
-a few GB/s of every number here.
+a few percent of every number here.
 
 And one more sweep pays off the post's opening claim in wall clock. Run the two
 halves separately and compare against running them fused:
@@ -976,6 +977,59 @@ halves separately and compare against running them fused:
 
 The identity holds to within two percent on real wires. And NVLS beats it by a
 quarter, which is the measured value of not being made of those two halves.
+
+## The same sweep, off the node
+
+A single node hid the tree, so I took the sweep across nodes: two and four 8x H200
+nodes over EFA (NCCL reports the network as Libfabric, the aws-ofi plugin from the
+capability section). Same build, same commit, same command plus MPI. The argmin
+draws a different map now:
+
+| size band | 2 nodes | 4 nodes |
+|---|---|---|
+| 256 B to 128 KiB | Tree + LL | Tree + LL |
+| 256 KiB to 8 MiB | Tree + LL128 | Tree + LL128 |
+| 16 MiB | Ring + LL128 | Tree + LL128 |
+| 32 MiB and up | NVLS_TREE + Simple | Ring + LL128, Simple from 512 MiB |
+
+Everything the single node deleted from the menu is back. The tree owns the small
+and medium sizes. The protocols climb LL to LL128 to Simple inside each algorithm's
+reign. And at two nodes the bulk sizes go to NVLS_TREE, the hybrid from the switch
+section: NVSwitch arithmetic inside each node, tree traffic between nodes, and no
+cooperation needed from a network that does no math. At 4 GiB the hybrid moves 464
+GB/s against the pinned ring's 366. Between one, two, and four nodes, the sweeps
+have now surfaced every algorithm this hardware admits: ring, tree, NVLS, NVLS_TREE,
+and all three protocols. The only rows never seen are the CollNet ones, which is the
+capability table working as written, because EFA's switches move bytes and do no
+math.
+
+Pin tree and ring and the crossover the sketch promised becomes numbers:
+
+| size | tree, 2 nodes | ring, 2 nodes | tree, 4 nodes | ring, 4 nodes |
+|---|---|---|---|---|
+| 256 B | 44 us | 100 us | 71 us | 229 us |
+| 64 KiB | 48 us | 111 us | 87 us | 237 us |
+| 1 MiB | 130 us | 158 us | 120 us | 401 us |
+| 16 MiB | 233 us | 226 us | 327 us | 393 us |
+| 64 MiB | 651 us | 522 us | 970 us | 634 us |
+
+Read the columns against the cost model. The ring's small-message floor is its
+linear hop count made visible: roughly 100 microseconds at two nodes, 229 at four.
+The tree's floor barely moves, 44 to 71, logarithmic depth doing exactly what it
+was hired to do. So the tree's advantage at 256 B grows from 2.3x to 3.2x with the
+node count, and the size where the ring catches up slides from 16 MiB at two nodes
+to 32 MiB at four. That is the two lines of the sketch crossing on real wires, and
+the crossover moving in the direction the model predicts as nodes are added.
+
+One more honest wrinkle. At 16 MiB on four nodes, the free choice ran Tree with
+LL128 in 525 microseconds while pinning the tree and leaving the protocol free ran
+327. The argmin mispicked the protocol right in the medium-size band whose
+hand-tuned correction table the tuning file apologizes for. The model is good. It
+is not perfect, and its own comments already told us where.
+
+And the identity survives leaving the node: at 4 GiB on four nodes,
+reduce-scatter plus all-gather sum to 23.4 milliseconds against the pinned ring
+all-reduce's 22.8, within three percent over EFA.
 
 ## The mental model that replaced mine
 
@@ -1008,6 +1062,10 @@ an SM your matmuls don't get.
 
 Claims about NCCL internals are checked against the NCCL master source at commit
 `5067397` (v2.30, August 2026); file and line references throughout point there.
+The measured numbers are [nccl-tests](https://github.com/NVIDIA/nccl-tests) sweeps
+against NCCL built from that same commit (reports as 2.30.7), on one 8x H100 node,
+one 8x H200 node, and two- and four-node H200 clusters over EFA, in-place columns
+throughout.
 
 - [NCCL source on GitHub](https://github.com/NVIDIA/nccl), specifically
   [`src/device/all_reduce.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h) (kernels), [`src/graph/trees.cc`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/trees.cc) and

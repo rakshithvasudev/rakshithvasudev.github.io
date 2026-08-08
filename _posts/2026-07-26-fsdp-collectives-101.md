@@ -360,7 +360,7 @@ reduce in its name. If they're complementary pieces of one thing, expect a gathe
 
 Everything else in FSDP, the CUDA streams, prefetching, `reshard_after_forward`,
 overlap, is engineering on top of one follow up question: the gathers cost time, can we
-hide them behind compute? That's the next post, with real profiler traces.
+hide them behind compute? That's a coming post, with real profiler traces.
 
 ## References
 
