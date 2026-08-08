@@ -1031,6 +1031,15 @@ And the identity survives leaving the node: at 4 GiB on four nodes,
 reduce-scatter plus all-gather sum to 23.4 milliseconds against the pinned ring
 all-reduce's 22.8, within three percent over EFA.
 
+I later reran the two-node sweep on a pair of H100 nodes, and the result is the
+right closing note for all of this. Same map, same sequence of regimes, but the
+border posts sit one power of two off: LL hands over to LL128 at 128 KiB instead
+of 256, and NVLS_TREE takes the bulk sizes from 64 MiB instead of 32 (468 GB/s
+against the ring's 345 at 4 GiB). Same fabric generation, same switches, slightly
+different constants, slightly different borders. Nobody moved a threshold, because
+there is no threshold. Two machines computed the same argmin over their own
+numbers and drew their own maps, which is the whole post in one sentence.
+
 ## The mental model that replaced mine
 
 What I had before reading the source: "NCCL does ring all-reduce."
