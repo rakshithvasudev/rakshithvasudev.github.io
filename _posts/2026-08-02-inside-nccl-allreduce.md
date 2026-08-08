@@ -37,13 +37,13 @@ If you only take three lines from this post:
 
 1. Ring and tree trade off the two costs every transfer has: a fixed delay per
    hop, and time proportional to the bytes moved. The ring moves the fewest
-   bytes any all-reduce can, so it wins when the message is large, but no
-   result is ready until it has hopped through every GPU in sequence, so its
-   fixed delay grows with GPU count and dominates when the message is small.
-   The tree is the mirror image: it reaches every node in a logarithmic number
-   of hops, so small messages finish much sooner; its bandwidth can in principle
-   match the ring's, but in practice falls short of it, so the largest messages
-   still go to the ring.
+   bytes any point-to-point all-reduce can, so it wins when the message is
+   large, but no result is ready until it has hopped through every GPU in
+   sequence, so its fixed delay grows with GPU count and dominates when the
+   message is small. The tree is the mirror image: it reaches every node in a
+   logarithmic number of hops, so small messages finish much sooner; its
+   bandwidth can in principle match the ring's, but in practice falls short of
+   it, so the largest messages tend to stay with the ring.
 2. There is no threshold constant that picks between them. NCCL models every
    algorithm and protocol pair as `time = latency + bytes/bandwidth` and takes the
    argmin, per call, at enqueue time.
@@ -389,8 +389,8 @@ disappears, and the hardware reads your tensors where they sit.
 
 ## Where the ring hurts
 
-If the ring moves the fewest bytes any all-reduce can, why would NCCL ever run
-anything else? Because bytes are only half of the bill.
+If the ring moves the fewest bytes any point-to-point all-reduce can, why would
+NCCL ever run anything else? Because bytes are only half of the bill.
 
 Count the steps again: `2(k-1)`, and they're sequential. Each chunk's sum isn't done
 until it has physically visited every rank. On 8 GPUs that's 14 hops. On 1024 GPUs
@@ -907,15 +907,15 @@ three. The ring cuts the buffer into n chunks. Across 16,384 ranks, a 1 GiB
 gradient bucket, the kind that feels enormous, is a 64 KiB chunk per rank. To
 be precise about what that does and does not mean: NCCL still prices the
 operation as a 1 GiB collective; the per-rank chunk is not what goes into the
-cost tables. What the division changes is the physical texture of the work,
-tiny slices whose per-hop overheads and pipelining behavior matter the way
-small messages always have. And the dominant scaling pressure sits in the
-latency column regardless: the ring's inter-node stage count grows roughly
-linearly with node count while the tree's grows logarithmically, so every
-added node argues a little harder for the low-depth plans. That's why the
-parts of this post that looked like small-message footnotes, the trees, LL
-and LL128, the switch offload, are the parts carrying frontier jobs, and the
-ring keeps the traffic that stays genuinely huge.
+cost tables. What the division changes is the physical texture of the work:
+tiny slices, where per-hop overheads and pipelining granularity count for more
+and more. And the dominant scaling pressure sits in the latency column
+regardless: the ring's inter-node stage count grows roughly linearly with node
+count while the tree's grows logarithmically, so every added node argues a
+little harder for the low-depth plans. That latency pressure is why the parts
+of this post that looked like small-message footnotes, the trees, LL and
+LL128, the switch offload, are the parts carrying frontier jobs, and the ring
+keeps the traffic that stays genuinely huge.
 
 The first thing scale changed was NCCL itself: the ring's linear latency growth
 became unacceptable, so the library grew a new algorithm. NVIDIA shipped it
@@ -1068,8 +1068,12 @@ quarter, which is the measured value of not being made of those two halves.
 
 A single node hid the tree, so I took the sweep across nodes: two and four 8x H200
 nodes over EFA (NCCL reports the network as Libfabric, the aws-ofi plugin from the
-capability section). Same build, same commit, same command plus MPI. The argmin
-draws a different map now:
+capability section). Same build, same commit, same command plus MPI. Write the
+forecast down first, like before: inter-node hops now carry real latency, so
+the tree should finally earn its keep at the small end; the ring's steady-state
+bandwidth should keep it in the running for the biggest payloads; and the
+hybrid rows are legal now, free to take whatever slice their constants favor.
+The argmin draws a different map:
 
 | size band | 2 nodes | 4 nodes |
 |---|---|---|
@@ -1107,11 +1111,12 @@ node count, and the size where the ring catches up slides from 16 MiB at two nod
 to 32 MiB at four. That is the two lines of the sketch crossing on real wires, and
 the crossover moving in the direction the model predicts as nodes are added.
 
-One more honest wrinkle. At 16 MiB on four nodes, the free choice ran Tree with
-LL128 in 525 microseconds while pinning the tree and leaving the protocol free ran
-327. The argmin mispicked the protocol right in the medium-size band whose
-hand-tuned correction table the tuning file apologizes for. The model is good. It
-is not perfect, and its own comments already told us where.
+One more honest wrinkle. At 16 MiB on four nodes, the free choice picked Tree
+with LL128 and ran in 525 microseconds, while pinning the tree and leaving only
+the protocol to the argmin ran the same size in 327 microseconds. The free
+choice had the right algorithm and the wrong protocol, right in the medium-size
+band whose hand-tuned correction table the tuning file apologizes for. The
+model is good. It is not perfect, and its own comments already told us where.
 
 And the identity survives leaving the node: at 4 GiB on four nodes,
 reduce-scatter plus all-gather sum to 23.4 milliseconds against the pinned ring
