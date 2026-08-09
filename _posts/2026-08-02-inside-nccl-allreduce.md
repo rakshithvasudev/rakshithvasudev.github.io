@@ -1129,27 +1129,50 @@ turned from color into a checklist.
 Past that point, teams stop tuning around collective costs and start
 designing for them.
 [Kimi K3's report](https://arxiv.org/abs/2607.24653) (2.8T parameters,
-mixture-of-experts, July 2026) does it twice. Their load balancer needs a
-quantile over millions of values scattered across every rank. Gathering them
-at training time is a non-starter, so each rank builds a histogram and "a
-single all-reduce sums the per-rank bin counts," priced in the report at
-under one percent of shipping the raw values. Notice what happened there: the
-computation got reshaped until its communication collapsed into one small
-all-reduce, dropped deliberately into the cheap regime where the trees and
-flag protocols live. Their serving stack pulls the reverse trick: the
-tensor-parallel all-reduce is "decomposed into a reduce-scatter and an
-all-gather," a compute kernel slots in between the halves, and a norm gets
-fused into the collective. That's the identity this post opened with, pried
-apart so work can hide inside it.
+mixture-of-experts, July 2026) does it three times over, and having traced
+NCCL first, each one reads as a deliberate move against the cost model.
+
+The mildest first. Their load balancer needs a quantile over expert margins
+that "number in the millions and are spread across ranks and accumulation
+steps", so gathering them at training time is a non-starter. Instead each
+rank builds a histogram and "a single all-reduce sums the per-rank bin
+counts". Counts are additive, so the pooled histogram represents the whole
+global batch no matter how the tokens are sharded, and the wire carries a few
+hundred bins per expert instead of millions of margins. The computation got
+reshaped until its communication collapsed into one small all-reduce, dropped
+deliberately into the cheap regime where the trees and flag protocols live.
+
+The biggest is MoonEP, their expert-parallel dispatch, and its lesson is that
+the strongest move against a collective's cost can be to change the shape of
+what it carries. Routed experts normally receive unpredictable token counts:
+every rank computes a different amount, buffers fragment, and the host has to
+sync with the device at every layer just to learn the shapes. MoonEP plans
+redundant experts online so that every rank receives exactly S×K tokens, and
+they prove that at most E/R redundant experts per rank always suffice, so the
+planner never fails and training never stalls. Perfect balance then pays on
+the wire: a fused permute sends each token straight to its expert-grouped
+position on the remote rank and hands views of the communication buffer back
+to the compute, no intermediate copies, with a fixed S×K buffer where the
+same copy-free path in DeepEP would need S×K×R in the worst case. They did
+not make the all-to-all faster; they made it constant-shaped, and everything
+around it became schedulable.
+
+And their serving stack pulls the reverse trick, in two halves. In prefill,
+the tensor-parallel all-reduce is "decomposed into a reduce-scatter and an
+all-gather" with an attention kernel inserted between the two collectives,
+operating on sequence-sharded activations so each token's block
+representation materializes on exactly one rank. In decoding, the merge and
+the RMSNorm that follow are fused into the preceding all-reduce, so the
+collective absorbs a kernel instead of being split by one. That's the
+identity this post opened with, pried apart in one direction and welded shut
+in the other.
 
 One caveat before you go read these reports yourself: in mixture-of-experts
-training the bulkiest traffic has moved to all-to-all expert dispatch (K3's
-MoonEP, the pipeline co-design in
+training the bulkiest traffic has moved to all-to-all expert dispatch (MoonEP
+above, the pipeline co-design in
 [DeepSeek-V3's report](https://arxiv.org/abs/2412.19437), and
-[GLM-5.2](https://huggingface.co/blog/zai-org/glm-52-blog)'s hierarchical
-all-to-all, described in the family's
-[technical report](https://arxiv.org/abs/2602.15763), which splits the
-intra-node and inter-node halves, the same fabric-level split as
+[GLM-5](https://arxiv.org/abs/2602.15763)'s hierarchical all-to-all, which
+splits the intra-node and inter-node halves, the same fabric-level split as
 NCCL's chain-inside-node, tree-across-nodes construction). That's a different
 collective with different math, and it deserves its own post. Gradient sync
 and tensor parallelism still run on the reduce-scatter, all-gather, and
@@ -1523,8 +1546,7 @@ throughout.
   source for the histogram all-reduce and the decomposed tensor-parallel
   all-reduce quoted above, and
   [DeepSeek-V3](https://arxiv.org/abs/2412.19437) and
-  [GLM-5.2](https://huggingface.co/blog/zai-org/glm-52-blog) (comms design in
-  the family's [technical report](https://arxiv.org/abs/2602.15763)) for the
-  all-to-all-centric side of mixture-of-experts communication.
+  [GLM-5](https://arxiv.org/abs/2602.15763) for the all-to-all-centric side of
+  mixture-of-experts communication.
 - [NCCL environment variables](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html),
   including `NCCL_ALGO`, `NCCL_PROTO`, and the debug switches used above.
