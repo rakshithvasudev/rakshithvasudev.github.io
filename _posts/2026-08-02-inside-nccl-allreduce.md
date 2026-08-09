@@ -35,15 +35,14 @@ source so you can check everything I claim. Everything below is from NCCL 2.30
 
 If you only take three lines from this post:
 
-1. Ring and tree trade off the two costs every transfer has: a fixed delay per
-   hop, and time proportional to the bytes moved. The ring moves the fewest
-   bytes any point-to-point all-reduce can, so it wins when the message is
-   large, but no result is ready until it has hopped through every GPU in
-   sequence, so its fixed delay grows with GPU count and dominates when the
-   message is small. The tree is the mirror image: it reaches every node in a
-   logarithmic number of hops, so small messages finish much sooner; its
-   bandwidth can in principle match the ring's, but in practice falls short of
-   it, so the largest messages tend to stay with the ring.
+1. Every all-reduce pays two costs: latency, the fixed overhead of each
+   communication step, and bandwidth, the time spent moving bytes. A ring
+   minimizes the total data each GPU sends, so it usually delivers the best
+   sustained bandwidth for large tensors. But it needs `2(n-1)` sequential
+   steps, so its latency grows linearly with the number of GPUs. A tree needs
+   only a logarithmic number of steps, so it wins for small tensors, where
+   latency dominates. In practice, trees sustain less bandwidth than rings, so
+   large tensors usually go back to the ring.
 2. There is no threshold constant that picks between them. NCCL models every
    algorithm and protocol pair as `time = latency + bytes/bandwidth` and takes the
    argmin, per call, at enqueue time.
@@ -401,7 +400,7 @@ it's 2046 hops, and that cost is paid even by a 4-byte all-reduce, because hops 
 hops regardless of size. Bandwidth optimal, latency linear. For big gradient buckets
 the pipeline hides it; for the small, frequent all-reduces that show up everywhere
 in real systems (loss scalars, norms, router statistics, anything at high world
-size) the alpha term dominates everything else.
+size) the fixed per-hop cost—the alpha term—dominates everything else.
 
 The fix is old: reduce up a tree, broadcast back down. Latency becomes logarithmic
 in the number of nodes. The problem that kept trees out of NCCL for years is
@@ -742,8 +741,7 @@ add the values in transit, and one `multimem.st`, asking it to replicate the sum
 back to everyone. One read, one write, per byte. No ring position, no steps, no
 per-peer anything. The reduction happens in the switch fabric.
 
-If that last sentence trips your too-good-to-be-true alarm, good, it should. So
-here is exactly where the work goes. The switch really does execute the adds:
+That last sentence sounds implausible, so here is exactly where the work goes. The switch really does execute the adds:
 starting with the third generation, the NVSwitch ASIC carries dedicated SHARP
 reduction hardware, and a `multimem.ld_reduce` is a load whose
 responses from all subscribed memories get combined at the switch ports before
@@ -1216,7 +1214,7 @@ What I have now:
   exactly one tree so no send bandwidth idles, and chains inside each node.
 - Latency work rides flags packed inside the data (LL, LL128); bandwidth work
   pays for fences (Simple).
-- On modern hardware, the fastest all-reduce is sometimes offloaded to the
+- On modern fabric, the fastest all-reduce is sometimes offloaded to the
   switch fabric: one load that returns the sum, one store that lands everywhere,
   and the switch does the math.
 
