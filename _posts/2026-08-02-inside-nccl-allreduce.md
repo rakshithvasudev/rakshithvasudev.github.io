@@ -128,6 +128,17 @@ The orange and green are deliberate: they're the same colors the last post used 
 reduce-scatter and all-gather, because the ring all-reduce literally is those two
 collectives fused.
 
+Here is that machinery actually moving. Two of the four chunks are shown, one
+position out of phase: orange still accumulating, green already circulating
+finished sums. Watch any single link and it never goes quiet, which is the
+ring's whole bandwidth argument in one loop. (The animated figures in this post
+have a pause button, follow your light or dark preference, and respect reduced
+motion; each also [opens standalone](/assets/anim/nccl-ring.html).)
+
+<div style="text-align:center">
+<iframe src="/assets/anim/nccl-ring.html" title="Animated ring all-reduce: two phase-offset chunks circling four GPUs" loading="lazy" style="width:100%;max-width:430px;height:950px;border:0;border-radius:10px"></iframe>
+</div>
+
 The one-chunk view shows the journey; it hides the schedule. To see where `2(n-1)`
 actually comes from, track who holds which running total after every step. Three GPUs keep it
 readable: call GPU i's contributions to the three chunks `ai`, `bi`, `ci`, and
@@ -380,6 +391,14 @@ through a lock:
 </svg>
 </div>
 
+Animated, with the slices doing the traveling: the tensor never moves as a
+whole, a bounded train of slices runs through the same eight slots for as long
+as the tensor lasts. ([standalone](/assets/anim/nccl-fifo.html))
+
+<div style="text-align:center">
+<iframe src="/assets/anim/nccl-fifo.html" title="Animated FIFO streaming: slices flowing through a fixed eight-slot window" loading="lazy" style="width:100%;max-width:400px;height:900px;border:0;border-radius:10px"></iframe>
+</div>
+
 Add it up and the total staging per rank is channels times connections times
 roughly 9 MiB (the three protocol buffers together, carved out per connection in
 [`src/transport/p2p.cc:488`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/p2p.cc#L488)). Order of 100 to 300 MiB for a typical communicator,
@@ -517,6 +536,16 @@ bandwidth.
 </g>
 <text x="340" y="242" text-anchor="middle" font-size="10.5" fill="#888">solid = interior (reduces and forwards), dashed = leaf. Every rank is solid in exactly one tree.</text>
 </svg>
+</div>
+
+And in motion, the part a static picture can't say: reduce climbs while
+broadcast descends, at the same time, with both trees working. One direction is
+drawn per tree here for legibility; in the kernel each tree carries both
+directions at once, which is the `runTreeSplit` story below.
+([standalone](/assets/anim/nccl-tree.html))
+
+<div style="text-align:center">
+<iframe src="/assets/anim/nccl-tree.html" title="Animated double binary tree: reduce climbing one tree while broadcast descends the other" loading="lazy" style="width:100%;max-width:640px;height:1080px;border:0;border-radius:10px"></iframe>
 </div>
 
 Three implementation details that surprised me:
@@ -799,6 +828,15 @@ is GPU ALUs touching the reduction and any software notion of a peer.
 <text x="470" y="118" text-anchor="middle" font-size="10.5" fill="#3f7a3f" stroke="#fafafa" stroke-width="3" paint-order="stroke">one store lands everywhere</text>
 <text x="340" y="214" text-anchor="middle" font-size="10.5" fill="#888">no GPU-to-GPU sends, no ring steps: the reduction happens in the switch fabric</text>
 </svg>
+</div>
+
+The same moment, animated: every GPU's load converges on the switch, which adds
+in transit, and the store fans back out to everyone. Compare it with the ring
+animation earlier: no ring position, no next peer, which is the entire point.
+([standalone](/assets/anim/nccl-nvls.html))
+
+<div style="text-align:center">
+<iframe src="/assets/anim/nccl-nvls.html" title="Animated NVLS: loads converging into the switch, multicast store fanning out" loading="lazy" style="width:100%;max-width:680px;height:660px;border:0;border-radius:10px"></iframe>
 </div>
 
 Which raises the obvious question: if the switch can do the math, why wouldn't
