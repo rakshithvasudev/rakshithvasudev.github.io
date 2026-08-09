@@ -11,10 +11,10 @@ true, and it's also where most explanations stop, mine included. It left me with
 picture of one algorithm, the ring, faithfully executed every time someone calls
 `ncclAllReduce`. So I cloned NCCL (version 2.30, current master)
 and read the implementation (with the help of my preferred agent of the day :D),
-and the picture underneath is much better than the one I was carrying. NCCL doesn't have an all-reduce algorithm. It has six, and three wire
-protocols to carry them. Each time you call it, it estimates how long every
-valid pairing would take on your message and your hardware, then runs the
-fastest one. The ring you learned from
+and the picture underneath is much better than the one I was carrying. NCCL does not have one all-reduce algorithm. It has six, and three wire
+protocols to carry them. Each time you call it, it estimates the cost of each
+valid pairing for your message and hardware, then selects the lowest-cost
+candidate. The ring you learned from
 the classic blog posts is just one row of that menu, and on the 8x H100 machine I
 measured, it stops being the pick once messages get large: the estimate starts
 favoring an algorithm in which no GPU addresses any other GPU, because the switch
@@ -22,7 +22,7 @@ hardware does the arithmetic.
 
 Said as three plain claims, since the whole post is really me testing them. One:
 there is no best all-reduce, only a best all-reduce for this message on this
-machine. Two: NCCL behaves like a planner, in the sense a database means the word.
+machine. Two: NCCL behaves like a database query planner.
 The hardware decides which algorithm and protocol pairings are legal, and a cost
 model estimates each pairing's runtime and picks a winner, per call. Three: what
 the winner mostly trades is fixed per-operation latency against sustained data
@@ -395,7 +395,7 @@ disappears, and the hardware reads your tensors where they sit.
 If the ring moves the fewest bytes any point-to-point all-reduce can, why would
 NCCL ever run anything else? Because bytes are only half of the bill.
 
-Count the steps again: `2(k-1)`, and they're sequential. Each chunk's sum isn't done
+Count the steps again: `2(n-1)`, and they're sequential. Each chunk's sum isn't done
 until it has physically visited every rank. On 8 GPUs that's 14 hops. On 1024 GPUs
 it's 2046 hops, and that cost is paid even by a 4-byte all-reduce, because hops are
 hops regardless of size. Bandwidth optimal, latency linear. For big gradient buckets
@@ -829,7 +829,7 @@ does the adds, and who moves the bytes".
 
 Everything above described the full menu, and if you're on older or plainer
 hardware you may reasonably ask which parts still apply to you. Almost all of
-it. Hardware does exactly two things to the planner: it sets the constants in
+it. Hardware affects the planner in two ways: it sets the constants in
 the cost tables, and it decides which plans are legal at all. Every algorithm
 row and protocol column is really a bet on one specific hardware capability, and
 the machinery for a missing capability is the one you've already seen: the row's
@@ -1097,7 +1097,7 @@ and all three protocols. The only rows never seen are the CollNet ones, which is
 capability table working as written, because EFA's switches move bytes and do no
 math.
 
-Pin tree and ring and the crossover the sketch promised becomes numbers:
+Pin tree and ring, and the crossover the sketch promised becomes numbers:
 
 | size | tree, 2 nodes | ring, 2 nodes | tree, 4 nodes | ring, 4 nodes |
 |---|---|---|---|---|
@@ -1127,8 +1127,8 @@ Tree with LL128 is the fastest of every algorithm this topology admits,
 each one forced and measured: 340 microseconds median against 968 for Tree
 with LL, 1117 for Tree with Simple, 407 for the best ring, and 357 for the
 forced NVLS_TREE hybrid. My first number was one uncontrolled
-sample on a shared fabric (I also suspected the debug logging that run
-carried; reproducing that exact environment measured 334, so it wasn't that
+sample on a shared fabric (I also suspected the debug logging enabled on that
+run; reproducing that exact environment measured 334, so it wasn't that
 either), and the rerun's own spread shows how easy such a sample is to
 collect: one of five ring repetitions spiked to nearly double its median. The
 argmin was right and my first measurement wasn't. The model still isn't an
@@ -1216,8 +1216,9 @@ What I have now:
   exactly one tree so no send bandwidth idles, and chains inside each node.
 - Latency work rides flags packed inside the data (LL, LL128); bandwidth work
   pays for fences (Simple).
-- On modern fabric, the best all-reduce is often no all-reduce: one load that
-  returns the sum, one store that lands everywhere, and the switch does the math.
+- On modern hardware, the fastest all-reduce is sometimes offloaded to the
+  switch fabric: one load that returns the sum, one store that lands everywhere,
+  and the switch does the math.
 
 The FSDP series will pick this thread right back up: FSDP's actual traffic is
 all-gather and reduce-scatter, and those have their own menu (including PAT,
