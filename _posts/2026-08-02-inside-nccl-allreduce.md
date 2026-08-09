@@ -1148,6 +1148,42 @@ different constants, slightly different borders. Nobody moved a threshold, becau
 there is no threshold. Two machines computed the same argmin over their own
 numbers and drew their own maps, which is the whole post in one sentence.
 
+Since the two dials keep doing the work in this post, I gave them one final sweep
+of their own: nine sizes from 16 MiB to 4 GiB, on one, two, and four H200 nodes,
+free choice plus every legal algorithm forced at every size, five repetitions on
+the big sizes. Tens to hundreds of MiB is representative gradient-bucket and
+shard territory in large training systems; the GiB points deliberately push into
+the bandwidth-dominated regime. (The two-node runs used a different H200 pair
+than the other two topologies, so read the columns as same generation rather
+than same silicon.) The fastest measured plan in each cell, with its bus
+bandwidth:
+
+| size | 1 node | 2 nodes | 4 nodes |
+|---|---|---|---|
+| 25 MiB | NVLS (ring ties), 271 GB/s | NVLS_TREE, 183 GB/s | Ring, 119 GB/s |
+| 50 MiB | NVLS, 325 GB/s | NVLS_TREE, 252 GB/s | Ring, 184 GB/s |
+| 100 MiB | NVLS, 398 GB/s | NVLS_TREE, 292 GB/s | Ring, 233 GB/s |
+| 256 MiB | NVLS, 441 GB/s | NVLS_TREE, 388 GB/s | Ring, 280 GB/s |
+| 512 MiB | NVLS, 453 GB/s | NVLS_TREE, 411 GB/s | Ring, 291 GB/s |
+| 1 GiB | NVLS, 461 GB/s | NVLS_TREE, 444 GB/s | Ring, 337 GB/s |
+| 4 GiB | NVLS, 471 GB/s | NVLS_TREE, 454 GB/s | Ring, 357 GB/s |
+
+Read the rows and the columns separately, because they are the two dials, finally
+turned independently. Down any column runs the message-size dial: every topology
+climbs to its own bandwidth plateau, about 470 GB/s for the switch on one node,
+about 450 for the hybrid on two, about 360 for the ring on four. Across any row
+runs the node-count dial: the winner changes with topology alone, the switch
+inside one node, the switch-plus-tree hybrid at two nodes, the plain ring at
+four, where the hybrid's inter-node half gives back what its switch half gains.
+The tree wins exactly one measured cell in the whole grid, 16 MiB at four nodes,
+which is the control condition doing its job: without expensive network depth to
+avoid, or above the sizes where depth dominates, the tree has nothing to sell.
+And everywhere away from the crossover boundaries, the free choice selects the
+same plan as the measured winner. Right at the borders it sometimes picks the
+neighbor instead, and five-run reruns show that costing a reproducible three to
+seven percent, which is the small toll a model pays for drawing clean lines
+through noisy territory.
+
 ## The mental model that replaced mine
 
 What I had before reading the source: "NCCL does ring all-reduce."
