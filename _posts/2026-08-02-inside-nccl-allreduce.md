@@ -36,9 +36,10 @@ source so you can check everything I claim. Everything below is from NCCL 2.30
 If you only take three lines from this post:
 
 1. Every all-reduce pays two costs: latency, the fixed overhead of each
-   communication step, and bandwidth, the time spent moving bytes. A ring
-   minimizes the total data each GPU sends, so it usually delivers the best
-   sustained bandwidth for large tensors. But it needs `2(n-1)` sequential
+   communication step, and bandwidth, the time spent moving bytes. Among
+   conventional point-to-point all-reduce algorithms, a ring minimizes the
+   total data each GPU sends, so it usually delivers the best sustained
+   bandwidth for large tensors. But it needs `2(n-1)` sequential
    steps, so its latency grows linearly with the number of GPUs. A tree needs
    only a logarithmic number of steps, so it wins for small tensors, where
    latency dominates. In practice, trees sustain less bandwidth than rings, so
@@ -391,8 +392,9 @@ disappears, and the hardware reads your tensors where they sit.
 
 ## Where the ring hurts
 
-If the ring moves the fewest bytes any point-to-point all-reduce can, why would
-NCCL ever run anything else? Because bytes are only half of the bill.
+If the ring moves the fewest bytes any conventional point-to-point all-reduce
+can, why would NCCL ever run anything else? Because bytes are only half of the
+bill.
 
 Count the steps again: `2(n-1)`, and they're sequential. Each chunk's sum isn't done
 until it has physically visited every rank. On 8 GPUs that's 14 hops. On 1024 GPUs
@@ -1182,7 +1184,8 @@ the tree never wins a cell there, and it never wins a bulk cell anywhere. Its
 one win sits exactly where the model says it should, the smallest payload on
 the deepest topology. At the bulk end the bandwidth term takes over on every
 topology, and the four-node column hands the biggest payloads to the plain
-ring, where the hybrid's inter-node half gives back what its switch half gains.
+ring, which suggests the hybrid's inter-node half gives back enough of its
+switch half's gains to lose at those sizes.
 
 Two honest footnotes from the finer grid. First, with the 25 MiB points added,
 the pinned tree-to-ring handover lands between 16 and 25 MiB at both two and
@@ -1210,8 +1213,9 @@ What I have now:
   set plus two more for its root; the reduce-scatter plus all-gather structure
   from the last post is visible as the two halves of the ring loop, and as the
   up and down teams of the tree kernel.
-- The tree is a double binary tree over nodes, with every rank interior in
-  exactly one tree so no send bandwidth idles, and chains inside each node.
+- The tree is a double binary tree over nodes, the two trees complementing
+  leaf and interior roles so send bandwidth stays busy, and chains inside
+  each node.
 - Latency work rides flags packed inside the data (LL, LL128); bandwidth work
   pays for fences (Simple).
 - On modern fabric, the fastest all-reduce is sometimes offloaded to the
