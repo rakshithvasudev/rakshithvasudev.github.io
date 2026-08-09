@@ -462,3 +462,12 @@ pre code {
   .site-nav { flex-wrap: wrap; }
   .site-main { padding-top: 1.5rem; }
 }
+
+/* figures: click to zoom */
+.post-content svg[role="img"] { cursor: zoom-in; }
+.svg-lightbox {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg); cursor: zoom-out; padding: 1.5vh 1.5vw;
+}
+.svg-lightbox svg { width: 97vw; height: 96vh; }

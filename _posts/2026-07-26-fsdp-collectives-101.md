@@ -30,7 +30,7 @@ first half and B for the second. Notice the mirror: one op goes small in, big ou
 other goes big in, small out.
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 290" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Diagram of all-gather and reduce-scatter with two GPUs">
+<svg viewBox="0 0 680 290" width="100%" style="height:auto" role="img" aria-label="Diagram of all-gather and reduce-scatter with two GPUs">
 <rect x="14" y="6" width="316" height="276" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <rect x="354" y="6" width="316" height="276" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <text x="122" y="26" text-anchor="middle" font-size="14" font-weight="bold" fill="#3f7a3f">all-gather</text>

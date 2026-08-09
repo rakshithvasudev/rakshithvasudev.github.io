@@ -61,5 +61,21 @@
       localStorage.setItem("theme", next);
     });
   </script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      document.querySelectorAll(".post-content svg[role='img']").forEach(function (svg) {
+        svg.addEventListener("click", function () {
+          var box = document.createElement("div");
+          box.className = "svg-lightbox";
+          box.appendChild(svg.cloneNode(true));
+          function onKey(e) { if (e.key === "Escape") close(); }
+          function close() { box.remove(); document.removeEventListener("keydown", onKey); }
+          box.addEventListener("click", close);
+          document.addEventListener("keydown", onKey);
+          document.body.appendChild(box);
+        });
+      });
+    });
+  </script>
 </body>
 </html>

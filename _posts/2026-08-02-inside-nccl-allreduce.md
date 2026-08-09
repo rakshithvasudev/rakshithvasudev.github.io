@@ -90,7 +90,7 @@ simultaneously, one position apart, so this diagram is happening four times at o
 rotated:
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 300" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Diagram of one chunk traveling a 4-GPU ring: reduce-scatter phase accumulates the sum, all-gather phase distributes it">
+<svg viewBox="0 0 680 300" width="100%" style="height:auto" role="img" aria-label="Diagram of one chunk traveling a 4-GPU ring: reduce-scatter phase accumulates the sum, all-gather phase distributes it">
 <rect x="14" y="6" width="316" height="266" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <rect x="354" y="6" width="316" height="266" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <text x="172" y="28" text-anchor="middle" font-size="14" font-weight="bold" fill="#a05c1a">reduce-scatter half</text>
@@ -134,7 +134,7 @@ readable: call GPU i's contributions to the three chunks `ai`, `bi`, `ci`, and
 watch four steps do the whole job:
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 302" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Full state evolution of a 3-GPU ring all-reduce over 4 steps: two reduce-scatter steps complete each chunk's sum, two all-gather steps distribute them">
+<svg viewBox="0 0 680 302" width="100%" style="height:auto" role="img" aria-label="Full state evolution of a 3-GPU ring all-reduce over 4 steps: two reduce-scatter steps complete each chunk's sum, two all-gather steps distribute them">
 <rect x="14" y="6" width="652" height="290" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <text x="171" y="32" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#555">GPU 0</text>
 <text x="367" y="32" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#555">GPU 1</text>
@@ -294,7 +294,7 @@ tuning model's derating of tree bandwidth is a separate and purely empirical
 story, which we'll get to.
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 280" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Four channels: a buffer cut into slices, each slice driven around its own ring by its own thread block">
+<svg viewBox="0 0 680 280" width="100%" style="height:auto" role="img" aria-label="Four channels: a buffer cut into slices, each slice driven around its own ring by its own thread block">
 <rect x="14" y="6" width="652" height="264" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <text x="340" y="28" text-anchor="middle" font-size="11" fill="#888">one collective's buffer, cut per channel</text>
 <rect x="90" y="38" width="122" height="26" fill="#dbe3f7" stroke="#5b6ee1"/>
@@ -385,7 +385,7 @@ two GPUs' progress is. The tensor streams through a fixed window, like a river
 through a lock:
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 240" width="100%" style="max-width:680px;height:auto" role="img" aria-label="A large tensor streaming through a fixed 8-slot FIFO between two GPUs, with head and tail pointers providing backpressure">
+<svg viewBox="0 0 680 240" width="100%" style="height:auto" role="img" aria-label="A large tensor streaming through a fixed 8-slot FIFO between two GPUs, with head and tail pointers providing backpressure">
 <rect x="14" y="6" width="652" height="222" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <text x="85" y="32" text-anchor="middle" font-size="11.5" fill="#555">your tensor</text>
 <g>
@@ -517,7 +517,7 @@ it's what NCCL 2.4 shipped as "double binary trees": tree latency at roughly rin
 bandwidth.
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 250" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Two mirrored binary trees over 12 ranks; leaves of one tree are interior nodes of the other">
+<svg viewBox="0 0 680 250" width="100%" style="height:auto" role="img" aria-label="Two mirrored binary trees over 12 ranks; leaves of one tree are interior nodes of the other">
 <rect x="14" y="6" width="316" height="226" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <rect x="354" y="6" width="316" height="226" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <text x="172" y="26" text-anchor="middle" font-size="13" font-weight="bold" fill="#a05c1a">tree one</text>
@@ -630,7 +630,7 @@ cost of a pair is one line ([`src/graph/tuning.cc:653`](https://github.com/NVIDI
 ```
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 166" width="100%" style="max-width:680px;height:auto" role="img" aria-label="The planner pipeline: a call meets the legal menu, every pair is priced, the argmin launches the plan">
+<svg viewBox="0 0 680 166" width="100%" style="height:auto" role="img" aria-label="The planner pipeline: a call meets the legal menu, every pair is priced, the argmin launches the plan">
 <rect x="14" y="6" width="652" height="150" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <rect x="30" y="44" width="112" height="58" rx="6" fill="#fff" stroke="#999" stroke-width="1.4"/>
 <rect x="158" y="44" width="112" height="58" rx="6" fill="#fff" stroke="#999" stroke-width="1.4"/>
@@ -706,7 +706,7 @@ ring, or, later in this post, the switch. The model computes each crossover from
 both dials; it never assumes one.
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 270" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Sketch of the cost model: time versus message size for tree and ring, with tree cheaper at small sizes and ring cheaper at large sizes">
+<svg viewBox="0 0 680 270" width="100%" style="height:auto" role="img" aria-label="Sketch of the cost model: time versus message size for tree and ring, with tree cheaper at small sizes and ring cheaper at large sizes">
 <rect x="14" y="6" width="652" height="246" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <line x1="70" y1="210" x2="630" y2="210" stroke="#bbb" stroke-width="1"/>
 <line x1="70" y1="210" x2="70" y2="30" stroke="#bbb" stroke-width="1"/>
@@ -799,7 +799,7 @@ it covers a huge range of sizes, which is why the model bothers pricing all
 three ([`src/graph/tuning.cc:328`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L328)).
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 254" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Wire layout of Simple, LL, and LL128: payload versus flag bytes in the same 128 wire bytes">
+<svg viewBox="0 0 680 254" width="100%" style="height:auto" role="img" aria-label="Wire layout of Simple, LL, and LL128: payload versus flag bytes in the same 128 wire bytes">
 <rect x="14" y="6" width="652" height="238" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <text x="340" y="28" text-anchor="middle" font-size="11" fill="#888">the same 128 wire bytes under each protocol</text>
 <text x="96" y="59" text-anchor="end" font-size="12" font-weight="bold" fill="#555">Simple</text>
@@ -941,7 +941,7 @@ The choreography, the staging, and the fixups stay on the GPU; what disappears
 is GPU ALUs touching the reduction and any software notion of a peer.
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 240" width="100%" style="max-width:680px;height:auto" role="img" aria-label="NVLS all-reduce: GPUs issue multimem loads that the NVSwitch reduces, and multimem stores that it replicates">
+<svg viewBox="0 0 680 240" width="100%" style="height:auto" role="img" aria-label="NVLS all-reduce: GPUs issue multimem loads that the NVSwitch reduces, and multimem stores that it replicates">
 <rect x="14" y="6" width="652" height="216" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <rect x="90" y="26" width="500" height="40" rx="6" fill="#fff" stroke="#999" stroke-width="1.4"/>
 <text x="340" y="46" text-anchor="middle" font-size="13" font-weight="bold" fill="#333">NVSwitch</text>
@@ -1359,7 +1359,7 @@ ring, which suggests the hybrid's inter-node half gives back enough of its
 switch half's gains to lose at those sizes.
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 268" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Measured bus bandwidth versus message size on 1, 2, and 4 nodes: three curves rising to plateaus of 471, 459, and 357 GB/s">
+<svg viewBox="0 0 680 268" width="100%" style="height:auto" role="img" aria-label="Measured bus bandwidth versus message size on 1, 2, and 4 nodes: three curves rising to plateaus of 471, 459, and 357 GB/s">
 <rect x="14" y="6" width="652" height="252" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <line x1="70" y1="184.0" x2="610" y2="184.0" stroke="#eee" stroke-width="1"/>
 <text x="62" y="187.0" text-anchor="end" font-size="9.5" fill="#999">100</text>
