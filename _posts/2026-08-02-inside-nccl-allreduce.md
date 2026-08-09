@@ -716,8 +716,8 @@ both dials; it never assumes one.
 <path d="M 70 150 C 220 149, 340 146, 430 132 C 510 119, 580 96, 630 72" fill="none" stroke="#4e8a4e" stroke-width="2.2"/>
 <!-- tree: low intercept, steeper rise -->
 <path d="M 70 190 C 200 188, 300 178, 390 148 C 470 121, 550 74, 615 32" fill="none" stroke="#5b6ee1" stroke-width="2.2"/>
-<line x1="452" y1="210" x2="452" y2="46" stroke="#999" stroke-width="1" stroke-dasharray="4,3"/>
-<text x="446" y="58" text-anchor="end" font-size="10.5" fill="#888">crossover</text>
+<line x1="434" y1="210" x2="434" y2="46" stroke="#999" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="428" y="58" text-anchor="end" font-size="10.5" fill="#888">crossover</text>
 <text x="150" y="176" font-size="11.5" fill="#5b6ee1">tree: low latency floor</text>
 <text x="132" y="136" font-size="11.5" fill="#3f7a3f">ring: pays 2(n-1) hops up front</text>
 <text x="622" y="145" text-anchor="end" font-size="11.5" fill="#3f7a3f">ring: near-optimal bandwidth</text>
