@@ -1151,38 +1151,50 @@ numbers and drew their own maps, which is the whole post in one sentence.
 Since the two dials keep doing the work in this post, I gave them one final sweep
 of their own: nine sizes from 16 MiB to 4 GiB, on one, two, and four H200 nodes,
 free choice plus every legal algorithm forced at every size, five repetitions on
-the big sizes. Tens to hundreds of MiB is representative gradient-bucket and
-shard territory in large training systems; the GiB points deliberately push into
-the bandwidth-dominated regime. (The two-node runs used a different H200 pair
-than the other two topologies, so read the columns as same generation rather
-than same silicon.) The fastest measured plan in each cell, with its bus
-bandwidth:
+the big sizes and on every crossover cell. All three topologies use nodes from
+the same four-node pool, so the columns differ in participating node count and
+in nothing else I could control. The 25 MiB point doubles as a training-scale
+anchor: it is PyTorch DDP's default gradient bucket (25 MiB, checked against
+the 2.11 source); the rest of the range is representative bucket-and-shard
+territory, and the GiB points deliberately push into the bandwidth-dominated
+regime. The fastest measured plan in each cell, with its bus bandwidth:
 
 | size | 1 node | 2 nodes | 4 nodes |
 |---|---|---|---|
-| 25 MiB | NVLS (ring ties), 271 GB/s | NVLS_TREE, 183 GB/s | Ring, 119 GB/s |
-| 50 MiB | NVLS, 325 GB/s | NVLS_TREE, 252 GB/s | Ring, 184 GB/s |
-| 100 MiB | NVLS, 398 GB/s | NVLS_TREE, 292 GB/s | Ring, 233 GB/s |
-| 256 MiB | NVLS, 441 GB/s | NVLS_TREE, 388 GB/s | Ring, 280 GB/s |
-| 512 MiB | NVLS, 453 GB/s | NVLS_TREE, 411 GB/s | Ring, 291 GB/s |
-| 1 GiB | NVLS, 461 GB/s | NVLS_TREE, 444 GB/s | Ring, 337 GB/s |
-| 4 GiB | NVLS, 471 GB/s | NVLS_TREE, 454 GB/s | Ring, 357 GB/s |
+| 16 MiB | Ring (NVLS ties), 255 GB/s | NVLS_TREE, 146 GB/s | Tree, 98 GB/s |
+| 25 MiB | NVLS (ring ties), 273 GB/s | NVLS_TREE, 178 GB/s | Ring, 119 GB/s |
+| 50 MiB | NVLS, 325 GB/s | NVLS_TREE, 249 GB/s | Ring, 184 GB/s |
+| 100 MiB | NVLS, 398 GB/s | NVLS_TREE, 300 GB/s | Ring, 233 GB/s |
+| 256 MiB | NVLS, 441 GB/s | NVLS_TREE, 392 GB/s | Ring, 280 GB/s |
+| 512 MiB | NVLS, 452 GB/s | NVLS_TREE, 408 GB/s | Ring, 291 GB/s |
+| 1 GiB | NVLS, 461 GB/s | NVLS_TREE, 441 GB/s | Ring, 337 GB/s |
+| 4 GiB | NVLS, 471 GB/s | NVLS_TREE, 459 GB/s | Ring, 357 GB/s |
 
 Read the rows and the columns separately, because they are the two dials, finally
 turned independently. Down any column runs the message-size dial: every topology
 climbs to its own bandwidth plateau, about 470 GB/s for the switch on one node,
-about 450 for the hybrid on two, about 360 for the ring on four. Across any row
-runs the node-count dial: the winner changes with topology alone, the switch
-inside one node, the switch-plus-tree hybrid at two nodes, the plain ring at
-four, where the hybrid's inter-node half gives back what its switch half gains.
-The tree wins exactly one measured cell in the whole grid, 16 MiB at four nodes,
-which is the control condition doing its job: without expensive network depth to
-avoid, or above the sizes where depth dominates, the tree has nothing to sell.
-And everywhere away from the crossover boundaries, the free choice selects the
-same plan as the measured winner. Right at the borders it sometimes picks the
-neighbor instead, and five-run reruns show that costing a reproducible three to
-seven percent, which is the small toll a model pays for drawing clean lines
-through noisy territory.
+about 460 for the hybrid on two, about 360 for the ring on four. Across any row
+runs the node-count dial, and the 16 MiB row is the whole argument in one line:
+the same collective that runs fastest as a ring inside one node (with the switch
+in a dead heat) hands to the hybrid at two nodes and to the tree at four. Within
+one pool of machines, the only thing that changes across that row is how many
+nodes participate, and with them the inter-node depth every candidate plan has
+to price. The single-node column is the control: with no network depth to avoid,
+the tree never wins a cell there, and it never wins a bulk cell anywhere. Its
+one win sits exactly where the model says it should, the smallest payload on
+the deepest topology. At the bulk end the bandwidth term takes over on every
+topology, and the four-node column hands the biggest payloads to the plain
+ring, where the hybrid's inter-node half gives back what its switch half gains.
+
+Two honest footnotes from the finer grid. First, with the 25 MiB points added,
+the pinned tree-to-ring handover lands between 16 and 25 MiB at both two and
+four nodes, so the crossover shift with node count that the coarser sweep put
+at 16 versus 32 MiB is real in direction but smaller than power-of-two sampling
+made it look. Second, away from the crossover boundaries the free choice
+selects the same plan as the measured winner in every cell; right at the
+borders it sometimes holds the neighboring plan instead, and five-run reruns
+put that toll between three and twelve percent, the price a model pays for
+drawing clean lines through noisy territory.
 
 ## The mental model that replaced mine
 
