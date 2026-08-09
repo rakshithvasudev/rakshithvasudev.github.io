@@ -740,7 +740,7 @@ static float treeCorrectionFactor[NCCL_NUM_PROTOCOLS][24] = {
   ...
 ```
 
-The comment above it is disarmingly honest: "Trees are not perfectly sticking to
+The comment above it admits it plainly: "Trees are not perfectly sticking to
 the model for medium sizes. Applying a static correction factor is not ideal but
 works quite well." A reminder that under the clean alpha-beta model there's an
 engineer with a benchmark harness making the numbers match reality.
@@ -1437,7 +1437,7 @@ switch half's gains to lose at those sizes.
 </svg>
 </div>
 
-Two honest footnotes from the finer grid. First, with the 25 MiB points added,
+Two footnotes from the finer grid. First, with the 25 MiB points added,
 the pinned tree-to-ring handover lands between 16 and 25 MiB at both two and
 four nodes, so the crossover shift with node count that the coarser sweep put
 at 16 versus 32 MiB is real in direction but smaller than power-of-two sampling
