@@ -4,7 +4,7 @@ title: About
 permalink: /about/
 ---
 
-I'm Rakshith Vasudev, an MLOps engineer at [Writer](https://writer.com/), previously
+I'm Rakshith Vasudev, an MLOps/AI infrastructure engineer at [Writer](https://writer.com/), previously
 at Dell. I build the infrastructure behind modern AI systems, but I'm equally
 interested in what happens inside the model itself: how architectural choices, training
 dynamics, data, and evaluation shape what a model can do. My work spans the path from
