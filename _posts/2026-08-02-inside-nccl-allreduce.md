@@ -293,6 +293,58 @@ climb one tree, the other half the other, concurrently on different SMs. The
 tuning model's derating of tree bandwidth is a separate and purely empirical
 story, which we'll get to.
 
+<div style="text-align:center">
+<svg viewBox="0 0 680 280" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Four channels: a buffer cut into slices, each slice driven around its own ring by its own thread block">
+<rect x="14" y="6" width="652" height="264" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<text x="340" y="28" text-anchor="middle" font-size="11" fill="#888">one collective's buffer, cut per channel</text>
+<rect x="90" y="38" width="122" height="26" fill="#dbe3f7" stroke="#5b6ee1"/>
+<text x="151" y="55" text-anchor="middle" font-size="10.5" fill="#333">slice 0</text>
+<line x1="151" y1="68" x2="151" y2="94" stroke="#999" stroke-width="1.4"/>
+<polygon points="147,94 155,94 151,102" fill="#999"/>
+<rect x="89" y="106" width="124" height="140" rx="6" fill="#fff" stroke="#999"/>
+<text x="151" y="126" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#333">channel 0</text>
+<text x="151" y="140" text-anchor="middle" font-size="9.5" fill="#888">one thread block, one SM</text>
+<circle cx="151" cy="172" r="20" fill="none" stroke="#b06f2a" stroke-width="1.6"/>
+<polygon points="147,152 155,152 151,145" fill="#b06f2a"/>
+<text x="151" y="214" text-anchor="middle" font-size="9.5" fill="#888">its own ring order</text>
+<text x="151" y="228" text-anchor="middle" font-size="9.5" fill="#888">its own FIFO slots</text>
+<rect x="216" y="38" width="122" height="26" fill="#dbe3f7" stroke="#5b6ee1"/>
+<text x="277" y="55" text-anchor="middle" font-size="10.5" fill="#333">slice 1</text>
+<line x1="277" y1="68" x2="277" y2="94" stroke="#999" stroke-width="1.4"/>
+<polygon points="273,94 281,94 277,102" fill="#999"/>
+<rect x="215" y="106" width="124" height="140" rx="6" fill="#fff" stroke="#999"/>
+<text x="277" y="126" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#333">channel 1</text>
+<text x="277" y="140" text-anchor="middle" font-size="9.5" fill="#888">one thread block, one SM</text>
+<circle cx="277" cy="172" r="20" fill="none" stroke="#b06f2a" stroke-width="1.6"/>
+<polygon points="273,152 281,152 277,145" fill="#b06f2a"/>
+<text x="277" y="214" text-anchor="middle" font-size="9.5" fill="#888">its own ring order</text>
+<text x="277" y="228" text-anchor="middle" font-size="9.5" fill="#888">its own FIFO slots</text>
+<rect x="342" y="38" width="122" height="26" fill="#dbe3f7" stroke="#5b6ee1"/>
+<text x="403" y="55" text-anchor="middle" font-size="10.5" fill="#333">slice 2</text>
+<line x1="403" y1="68" x2="403" y2="94" stroke="#999" stroke-width="1.4"/>
+<polygon points="399,94 407,94 403,102" fill="#999"/>
+<rect x="341" y="106" width="124" height="140" rx="6" fill="#fff" stroke="#999"/>
+<text x="403" y="126" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#333">channel 2</text>
+<text x="403" y="140" text-anchor="middle" font-size="9.5" fill="#888">one thread block, one SM</text>
+<circle cx="403" cy="172" r="20" fill="none" stroke="#b06f2a" stroke-width="1.6"/>
+<polygon points="399,152 407,152 403,145" fill="#b06f2a"/>
+<text x="403" y="214" text-anchor="middle" font-size="9.5" fill="#888">its own ring order</text>
+<text x="403" y="228" text-anchor="middle" font-size="9.5" fill="#888">its own FIFO slots</text>
+<rect x="468" y="38" width="122" height="26" fill="#dbe3f7" stroke="#5b6ee1"/>
+<text x="529" y="55" text-anchor="middle" font-size="10.5" fill="#333">slice 3</text>
+<line x1="529" y1="68" x2="529" y2="94" stroke="#999" stroke-width="1.4"/>
+<polygon points="525,94 533,94 529,102" fill="#999"/>
+<rect x="467" y="106" width="124" height="140" rx="6" fill="#fff" stroke="#999"/>
+<text x="529" y="126" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#333">channel 3</text>
+<text x="529" y="140" text-anchor="middle" font-size="9.5" fill="#888">one thread block, one SM</text>
+<circle cx="529" cy="172" r="20" fill="none" stroke="#b06f2a" stroke-width="1.6"/>
+<polygon points="525,152 533,152 529,145" fill="#b06f2a"/>
+<text x="529" y="214" text-anchor="middle" font-size="9.5" fill="#888">its own ring order</text>
+<text x="529" y="228" text-anchor="middle" font-size="9.5" fill="#888">its own FIFO slots</text>
+<text x="340" y="262" text-anchor="middle" font-size="10.5" fill="#888">grid.x equals the channel count: four lanes moving four slices through four rings at once</text>
+</svg>
+</div>
+
 ## Why a 10 GB all-reduce doesn't OOM
 
 The last post spent a section on why FSDP's photocopies don't blow up memory. The
@@ -577,6 +629,55 @@ cost of a pair is one line ([`src/graph/tuning.cc:653`](https://github.com/NVIDI
 *time = lat * latCount + nBytes / (1000 * bw);
 ```
 
+<div style="text-align:center">
+<svg viewBox="0 0 680 166" width="100%" style="max-width:680px;height:auto" role="img" aria-label="The planner pipeline: a call meets the legal menu, every pair is priced, the argmin launches the plan">
+<rect x="14" y="6" width="652" height="150" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<rect x="30" y="44" width="112" height="58" rx="6" fill="#fff" stroke="#999" stroke-width="1.4"/>
+<rect x="158" y="44" width="112" height="58" rx="6" fill="#fff" stroke="#999" stroke-width="1.4"/>
+<rect x="286" y="44" width="112" height="58" rx="6" fill="#fff" stroke="#999" stroke-width="1.4"/>
+<rect x="414" y="44" width="112" height="58" rx="6" fill="#fff" stroke="#999" stroke-width="1.4"/>
+<rect x="542" y="44" width="112" height="58" rx="6" fill="#fff" stroke="#4e8a4e" stroke-width="2"/>
+<line x1="142" y1="73" x2="154" y2="73" stroke="#999" stroke-width="1.4"/>
+<polygon points="154,69 154,77 160,73" fill="#999"/>
+<line x1="270" y1="73" x2="282" y2="73" stroke="#999" stroke-width="1.4"/>
+<polygon points="282,69 282,77 288,73" fill="#999"/>
+<line x1="398" y1="73" x2="410" y2="73" stroke="#999" stroke-width="1.4"/>
+<polygon points="410,69 410,77 416,73" fill="#999"/>
+<line x1="526" y1="73" x2="538" y2="73" stroke="#999" stroke-width="1.4"/>
+<polygon points="538,69 538,77 544,73" fill="#999"/>
+<text x="86" y="68" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">ncclAllReduce</text>
+<text x="86" y="86" text-anchor="middle" font-size="9.5" font-weight="normal" fill="#888">one call, N bytes</text>
+<text x="214" y="62" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">legal menu</text>
+<text x="342" y="64" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">price each pair</text>
+<text x="342" y="80" text-anchor="middle" font-size="9.5" font-weight="normal" fill="#555">lat + bytes / bw</text>
+<text x="342" y="94" text-anchor="middle" font-size="8.5" font-weight="normal" fill="#888">+ correction tables</text>
+<text x="470" y="77" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">argmin</text>
+<text x="598" y="64" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">launch the plan</text>
+<text x="598" y="80" text-anchor="middle" font-size="9.5" font-weight="normal" fill="#555">algo + proto</text>
+<text x="598" y="94" text-anchor="middle" font-size="8.5" font-weight="normal" fill="#888">+ channel count</text>
+<rect x="178" y="70" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="189" y="70" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="200" y="70" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="211" y="70" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="222" y="70" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<rect x="233" y="70" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<rect x="178" y="78" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="189" y="78" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="200" y="78" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="211" y="78" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<rect x="222" y="78" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<rect x="233" y="78" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<rect x="178" y="86" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="189" y="86" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="200" y="86" width="9" height="6" fill="#d8ecd8" stroke="#9cc49c" stroke-width="0.6"/>
+<rect x="211" y="86" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<rect x="222" y="86" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<rect x="233" y="86" width="9" height="6" fill="#eee" stroke="#ddd" stroke-width="0.6"/>
+<text x="214" y="96" text-anchor="middle" font-size="8.5" fill="#888">hardware zeroes rows</text>
+<text x="340" y="140" text-anchor="middle" font-size="10.5" fill="#888">per call, at enqueue time; no threshold is stored anywhere</text>
+</svg>
+</div>
+
 Latency plus bytes over bandwidth. For ring all-reduce the latency entry works out
 to the hop count you'd derive on paper, split by link type:
 
@@ -696,6 +797,76 @@ payload, 93.75 percent of bandwidth at roughly half of Simple's per-hop latency
 ([`src/device/prims_ll128.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_ll128.h)). On NVLink paths LL128 is such a good default that
 it covers a huge range of sizes, which is why the model bothers pricing all
 three ([`src/graph/tuning.cc:328`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/graph/tuning.cc#L328)).
+
+<div style="text-align:center">
+<svg viewBox="0 0 680 254" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Wire layout of Simple, LL, and LL128: payload versus flag bytes in the same 128 wire bytes">
+<rect x="14" y="6" width="652" height="238" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<text x="340" y="28" text-anchor="middle" font-size="11" fill="#888">the same 128 wire bytes under each protocol</text>
+<text x="96" y="59" text-anchor="end" font-size="12" font-weight="bold" fill="#555">Simple</text>
+<rect x="110" y="44" width="480" height="22" fill="#dbe3f7" stroke="#5b6ee1"/>
+<text x="350" y="59" text-anchor="middle" font-size="10" fill="#333">payload, all 128 B</text>
+<text x="600" y="59" text-anchor="start" font-size="11" font-weight="bold" fill="#555">100%</text>
+<text x="110" y="82" font-size="9.5" fill="#888">readiness costs extra: a memory fence and a tail update on every hop</text>
+<text x="96" y="123" text-anchor="end" font-size="12" font-weight="bold" fill="#555">LL</text>
+<rect x="110" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="125" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="140" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="155" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="170" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="185" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="200" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="215" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="230" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="245" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="260" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="275" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="290" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="305" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="320" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="335" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="350" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="365" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="380" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="395" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="410" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="425" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="440" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="455" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="470" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="485" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="500" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="515" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="530" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="545" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="560" y="108" width="15" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="575" y="108" width="15" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="110" y="108" width="480" height="22" fill="none" stroke="#c9a97a"/>
+<text x="600" y="123" text-anchor="start" font-size="11" font-weight="bold" fill="#555">50%</text>
+<text x="110" y="146" font-size="9.5" fill="#888">a 4 B flag rides beside every 4 B of data; no fence, but half the wire is flags</text>
+<text x="96" y="187" text-anchor="end" font-size="12" font-weight="bold" fill="#555">LL128</text>
+<rect x="110" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="140" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="170" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="200" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="230" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="260" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="290" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="320" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="350" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="380" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="410" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="440" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="470" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="500" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="530" y="172" width="30" height="22" fill="#dbe3f7" stroke="#fff" stroke-width="1"/>
+<rect x="560" y="172" width="30" height="22" fill="#f6dfc4" stroke="#fff" stroke-width="1"/>
+<rect x="110" y="172" width="480" height="22" fill="none" stroke="#8fa3d8"/>
+<text x="600" y="187" text-anchor="start" font-size="11" font-weight="bold" fill="#555">93.75%</text>
+<text x="110" y="210" font-size="9.5" fill="#888">one flag word per 128 B line; needs the write to land whole and in order</text>
+<rect x="240" y="222" width="12" height="10" fill="#dbe3f7" stroke="#8fa3d8"/><text x="258" y="231" font-size="9.5" fill="#666">payload</text>
+<rect x="320" y="222" width="12" height="10" fill="#f6dfc4" stroke="#c9a97a"/><text x="338" y="231" font-size="9.5" fill="#666">flag</text>
+</svg>
+</div>
 
 | | Simple | LL | LL128 |
 |---|---|---|---|
@@ -1186,6 +1357,69 @@ the deepest topology. At the bulk end the bandwidth term takes over on every
 topology, and the four-node column hands the biggest payloads to the plain
 ring, which suggests the hybrid's inter-node half gives back enough of its
 switch half's gains to lose at those sizes.
+
+<div style="text-align:center">
+<svg viewBox="0 0 680 268" width="100%" style="max-width:680px;height:auto" role="img" aria-label="Measured bus bandwidth versus message size on 1, 2, and 4 nodes: three curves rising to plateaus of 471, 459, and 357 GB/s">
+<rect x="14" y="6" width="652" height="252" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<line x1="70" y1="184.0" x2="610" y2="184.0" stroke="#eee" stroke-width="1"/>
+<text x="62" y="187.0" text-anchor="end" font-size="9.5" fill="#999">100</text>
+<line x1="70" y1="150.0" x2="610" y2="150.0" stroke="#eee" stroke-width="1"/>
+<text x="62" y="153.0" text-anchor="end" font-size="9.5" fill="#999">200</text>
+<line x1="70" y1="116.0" x2="610" y2="116.0" stroke="#eee" stroke-width="1"/>
+<text x="62" y="119.0" text-anchor="end" font-size="9.5" fill="#999">300</text>
+<line x1="70" y1="82.0" x2="610" y2="82.0" stroke="#eee" stroke-width="1"/>
+<text x="62" y="85.0" text-anchor="end" font-size="9.5" fill="#999">400</text>
+<line x1="70" y1="48.0" x2="610" y2="48.0" stroke="#eee" stroke-width="1"/>
+<text x="62" y="51.0" text-anchor="end" font-size="9.5" fill="#999">500</text>
+<line x1="70" y1="218.0" x2="610" y2="218.0" stroke="#ccc" stroke-width="1"/>
+<text x="70.0" y="232" text-anchor="middle" font-size="9.5" fill="#999">16 MiB</text>
+<text x="205.0" y="232" text-anchor="middle" font-size="9.5" fill="#999">64 MiB</text>
+<text x="340.0" y="232" text-anchor="middle" font-size="9.5" fill="#999">256 MiB</text>
+<text x="475.0" y="232" text-anchor="middle" font-size="9.5" fill="#999">1 GiB</text>
+<text x="610.0" y="232" text-anchor="middle" font-size="9.5" fill="#999">4 GiB</text>
+<text x="40" y="40" font-size="9.5" fill="#999">GB/s</text>
+<rect x="120" y="30" width="12" height="4" fill="#4557c9"/>
+<text x="137" y="36" font-size="10" fill="#666">1 node (NVLS)</text>
+<rect x="280" y="30" width="12" height="4" fill="#3a7a3a"/>
+<text x="297" y="36" font-size="10" fill="#666">2 nodes (NVLS_TREE)</text>
+<rect x="440" y="30" width="12" height="4" fill="#dd9a4a"/>
+<text x="457" y="36" font-size="10" fill="#666">4 nodes (Ring)</text>
+<polyline points="70.0,131.3 113.5,125.2 181.0,107.5 248.5,82.7 316.0,70.4 340.0,68.1 407.5,64.3 475.0,61.3 610.0,57.9" fill="none" stroke="#4557c9" stroke-width="2"/>
+<circle cx="70.0" cy="131.3" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="113.5" cy="125.2" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="181.0" cy="107.5" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="248.5" cy="82.7" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="316.0" cy="70.4" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="340.0" cy="68.1" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="407.5" cy="64.3" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="475.0" cy="61.3" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<circle cx="610.0" cy="57.9" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
+<text x="616" y="55" font-size="10.5" font-weight="bold" fill="#4557c9">471</text>
+<polyline points="70.0,168.4 113.5,157.5 181.0,133.3 248.5,116.0 316.0,92.2 340.0,84.7 407.5,79.3 475.0,68.1 610.0,61.9" fill="none" stroke="#3a7a3a" stroke-width="2"/>
+<circle cx="70.0" cy="168.4" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="113.5" cy="157.5" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="181.0" cy="133.3" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="248.5" cy="116.0" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="316.0" cy="92.2" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="340.0" cy="84.7" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="407.5" cy="79.3" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="475.0" cy="68.1" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="610.0" cy="61.9" r="4" fill="#3a7a3a" stroke="#fafafa" stroke-width="2"/>
+<text x="616" y="74" font-size="10.5" font-weight="bold" fill="#3a7a3a">459</text>
+<polyline points="70.0,184.7 113.5,177.5 181.0,155.4 248.5,138.8 316.0,126.2 340.0,122.8 407.5,119.1 475.0,103.4 610.0,96.6" fill="none" stroke="#dd9a4a" stroke-width="2"/>
+<circle cx="70.0" cy="184.7" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="113.5" cy="177.5" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="181.0" cy="155.4" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="248.5" cy="138.8" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="316.0" cy="126.2" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="340.0" cy="122.8" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="407.5" cy="119.1" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="475.0" cy="103.4" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<circle cx="610.0" cy="96.6" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
+<text x="616" y="100" font-size="10.5" font-weight="bold" fill="#dd9a4a">357</text>
+<text x="340" y="252" text-anchor="middle" font-size="10.5" fill="#888">bus bandwidth of the fastest measured plan per size, same four-node pool; every topology climbs to its own plateau</text>
+</svg>
+</div>
 
 Two honest footnotes from the finer grid. First, with the 25 MiB points added,
 the pinned tree-to-ring handover lands between 16 and 25 MiB at both two and
