@@ -53,7 +53,8 @@ If you only take three lines from this post:
 ## What all-reduce promises
 
 First, the contract, for anyone landing here without the last post. All-reduce
-takes one same-shaped tensor per rank, combines them element wise, and leaves
+takes one same-shaped tensor per rank (think: one participating GPU, for
+everything in this post), combines them element wise, and leaves
 every rank holding the identical combined result. The numbers from last time work
 just as well here:
 
@@ -273,11 +274,11 @@ NCCL carves the buffer across many independent rings.
 
 ## Channels: the ring is plural
 
-A "channel" is one independent copy of the whole communication pipeline: its own
-ring order, its own FIFO buffers, its own slice of the input, driven by its own
-CUDA thread block on its own SM. Channels exist because one thread block doing
-loads and stores cannot come close to saturating a fabric that moves hundreds of
-gigabytes per second, so NCCL runs up to 64 of these pipelines side by side
+One ring, driven by one thread block, is nowhere near enough to saturate a
+fabric that moves hundreds of gigabytes per second. So NCCL runs many copies of
+the communication pipeline in parallel, and calls each copy a "channel": its own
+ring order, its own FIFO buffers, its own slice of the input, its own CUDA
+thread block on its own SM. It runs up to 64 of these pipelines side by side
 (`MAXCHANNELS`,
 [`src/include/device.h`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h)) and splits every collective across them. The channel
 count is literally the kernel's launch geometry: `grid.x` is the number of
@@ -886,6 +887,12 @@ reducing and links do the moving. On Hopper and newer machines with NVSwitch, th
 switch itself can reduce, and NCCL's fastest single-node algorithm is built on
 that. NVIDIA calls it NVLink SHARP; in the code it's `NCCL_ALGO_NVLS`.
 
+Getting there takes a different memory primitive first. An ordinary load names
+one address on one GPU, and the switch can't reduce across buffers it has no way
+to name as a group; NVLS needs an address that stands for the same buffer on
+every GPU at once, so that a single memory operation becomes a group operation
+the fabric can act on. That is what CUDA multicast memory provides.
+
 The mechanism sits on CUDA multicast memory: one virtual address range that names
 a group of physical memories, one per GPU, so that a single load or store can
 address all of them at once. At init, every local GPU binds
@@ -1076,7 +1083,9 @@ these mechanisms does the heavy lifting up there, and what gives out first.
 Three papers answer that, and reading them after tracing the source is a
 different experience than reading them before.
 
-Do one division before anything else, because it rearranged how I read all
+Scale changes more than the hop counts; it also changes the grain of what each
+stage of a collective is actually carrying. Do one division before anything
+else, because it rearranged how I read all
 three. The ring cuts the buffer into n chunks. Across 16,384 ranks, a 1 GiB
 gradient bucket, the kind that feels enormous, is a 64 KiB chunk per rank. To
 be precise about what that does and does not mean: NCCL still prices the
@@ -1319,8 +1328,15 @@ different constants, slightly different borders. Nobody moved a threshold, becau
 there is no threshold. Two machines computed the same argmin over their own
 numbers and drew their own maps, which is the whole post in one sentence.
 
-Since the two dials keep doing the work in this post, I gave them one final sweep
-of their own: nine sizes from 16 MiB to 4 GiB, on one, two, and four H200 nodes,
+## Turning both dials at once
+
+So far the sweeps turned one dial at a time: message size within a machine, node
+count across machines. But those two dials are exactly what the cost model prices
+against each other, so the last experiment turns them together: hold the hardware
+pool fixed, vary how many of its nodes participate, and sweep the same message
+sizes across every topology.
+
+Nine sizes from 16 MiB to 4 GiB, on one, two, and four H200 nodes,
 free choice plus every legal algorithm forced at every size, five repetitions on
 the big sizes and on every crossover cell. All three topologies use nodes from
 the same four-node pool, so the columns differ in participating node count and
