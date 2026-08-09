@@ -346,12 +346,13 @@ story, which we'll get to.
 </svg>
 </div>
 
-## Why a 10 GB all-reduce doesn't OOM
+## Why a 100 GB all-reduce doesn't OOM
 
 The last post spent a section on why FSDP's photocopies don't blow up memory. The
-same worry transfers here, sharpened. Eight ranks all-reduce a 10 GB gradient, so
-over the course of the collective each GPU receives many gigabytes of other GPUs'
-partial sums. Where does all of that land? If your instinct says "some staging
+same worry transfers here, sharpened. Eight ranks all-reduce a 100 GB tensor in
+place (I ran exactly this; the measurement closes the section), so over the
+course of the collective each GPU receives on the order of a hundred gigabytes
+of other GPUs' partial sums. Where does all of that land? If your instinct says "some staging
 buffer proportional to the message", all-reduce should be scary. It isn't, and the
 short answer is that the gigabytes never live anywhere as a whole: data streams
 through a handful of fixed-size reusable transfer slots, and the tensor's size
@@ -375,8 +376,9 @@ for Simple, 512 KiB for LL, 4.6875 MiB for LL128 ([`src/init.cc:810`](https://gi
 into `NCCL_STEPS = 8` slots. These are allocated when the communicator is created
 (that memory bump you see at `init_process_group` time is exactly this, plus
 peers and channels), and then reused for every collective for the life of the
-communicator. A 4 KB all-reduce and a 10 GB all-reduce flow through the same
-slots.
+communicator. A 4 KB all-reduce and the measured 100 GB all-reduce below flow
+through the same slots: a bigger tensor lengthens the stream, it does not widen
+the window.
 
 Third, backpressure. The sender is allowed to run at most 8 slots ahead of the
 receiver: `waitPeer` ([`src/device/prims_simple.h:100`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_simple.h#L100)) spins until the receiver's
@@ -442,6 +444,18 @@ when you create the communicator and then never moves during training, and why
 registered-buffer paths later in this post (NVLS user-buffer registration and the
 network's direct modes) push this to its logical end: even the fixed staging copy
 disappears, and the hardware reads your tensors where they sit.
+
+I measured this at the far end of plausible. On this post's 8x H200 node, a
+single in-place all-reduce of 100 GB (the decimal kind, 100,000,000,000 bytes,
+about 93.1 GiB of user tensor per GPU) picked the same NVLS plan as 4 GiB and
+ran at 483 GB/s of bus bandwidth, a hair above the 4 GiB plateau. The memory
+ledger, sampled every millisecond while it ran: the communicator's persistent
+footprint was about 1 GiB; with the tensor already allocated, peak GPU memory
+during the collective rose by 4.6 GiB (the NVLS path's working buffers, created
+at first use), and a 4 GiB control measured the same way rose by the same
+4.6 GiB to the MiB, over the same ordinary unregistered-buffer path. The tensor
+got 23 times bigger and the collective-time memory did not move. On this
+machine and this path, the staging is bounded; the stream just runs longer.
 
 ## Where the ring hurts
 
@@ -1471,6 +1485,11 @@ selects the same plan as the measured winner in every cell; right at the
 borders it sometimes holds the neighboring plan instead, and five-run reruns
 put that toll between three and twelve percent, the price a model pays for
 drawing clean lines through noisy territory.
+
+One stress point past the table's right edge: a single in-place all-reduce of
+100 GB (100,000,000,000 bytes) on the same one-node machine picked the same
+NVLS plan and ran 362 ms median at 483 GB/s of bus bandwidth, a hair above the
+4 GiB plateau. The memory side of that run lives back in the 100 GB section.
 
 ## The mental model that replaced mine
 
