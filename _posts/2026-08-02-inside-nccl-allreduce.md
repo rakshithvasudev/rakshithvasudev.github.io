@@ -402,7 +402,7 @@ it's 2046 hops, and that cost is paid even by a 4-byte all-reduce, because hops 
 hops regardless of size. Bandwidth optimal, latency linear. For big gradient buckets
 the pipeline hides it; for the small, frequent all-reduces that show up everywhere
 in real systems (loss scalars, norms, router statistics, anything at high world
-size) the fixed per-hop cost—the alpha term—dominates everything else.
+size) the fixed per-hop cost, the alpha term, dominates everything else.
 
 The fix is old: reduce up a tree, broadcast back down. Latency becomes logarithmic
 in the number of nodes. The problem that kept trees out of NCCL for years is
