@@ -194,6 +194,17 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   padding: 0.12rem 0.5rem;
   border-radius: 99px;
 }
+a.tag:hover { color: var(--accent); text-decoration: none; }
+
+/* ---------- Tags page ---------- */
+.tags-page ul { list-style: none; padding-left: 0; }
+.tags-page li { display: flex; justify-content: space-between; gap: 1rem; }
+.tags-page-date {
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 
 /* ---------- Post ---------- */
 .post-header { margin-bottom: 1.75rem; }

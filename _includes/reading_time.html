@@ -1,0 +1,1 @@
+{% capture rt_prose %}{% assign rt_segs = include.content | split: '<pre' %}{% for rt_s in rt_segs %}{% if forloop.first %}{{ rt_s }}{% else %}{{ rt_s | split: '</pre>' | last }}{% endif %}{% endfor %}{% endcapture %}{% assign rt_words = rt_prose | strip_html | number_of_words %}{{ rt_words | divided_by: 220 | at_least: 1 }} min

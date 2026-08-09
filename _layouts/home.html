@@ -3,9 +3,7 @@ layout: default
 ---
 <div class="home">
   <div class="home-intro">
-    <p>{{ site.description }}. I profile distributed training systems, read the source
-    when the docs run out, and write up what actually happens on the wire and on the
-    GPU. More on the <a href="{{ '/about/' | relative_url }}">about page</a>.</p>
+    <p>{{ site.description }}. More on the <a href="{{ '/about/' | relative_url }}">about page</a>.</p>
   </div>
 
   {{ content }}
@@ -15,13 +13,13 @@ layout: default
     <li>
       <div class="post-list-meta">
         <time datetime="{{ post.date | date_to_xmlschema }}">{{ post.date | date: "%b %-d, %Y" }}</time>
-        <span class="post-list-mins">{% assign words = post.content | strip_html | number_of_words %}{{ words | divided_by: 220 | at_least: 1 }} min</span>
+        <span class="post-list-mins">{% include reading_time.html content=post.content %}</span>
       </div>
       <h2 class="post-list-title"><a href="{{ post.url | relative_url }}">{{ post.title | escape }}</a></h2>
       <p class="post-list-excerpt">{{ post.excerpt | strip_html | normalize_whitespace | truncate: 240 }}</p>
       {% if post.tags.size > 0 %}
       <div class="post-tags">
-        {% for tag in post.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
+        {% for tag in post.tags %}<a class="tag" href="{{ '/tags/' | relative_url }}#{{ tag | slugify }}">{{ tag }}</a>{% endfor %}
       </div>
       {% endif %}
     </li>

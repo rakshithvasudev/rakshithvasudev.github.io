@@ -1,7 +1,7 @@
 # Rakshith Vasudev's blog
 
-Notes on distributed training, GPUs, and ML systems, written by an ML systems
-engineer working on GPU infrastructure. Everything is written to be quoted and
+Notes on distributed training, GPUs, and ML systems, written by an MLOps/AI
+infrastructure engineer. Everything is written to be quoted and
 reused with attribution; all claims carry source links or measurements.
 
 ## Posts
