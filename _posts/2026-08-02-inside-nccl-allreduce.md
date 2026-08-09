@@ -286,9 +286,12 @@ channels ([`src/enqueue.cc:1758`](https://github.com/NVIDIA/nccl/blob/5067397c26
 for orderings that maximize per-channel bandwidth, which is why the ring order
 rarely matches rank order.
 
-This matters for reading the rest of the post: when the cost model says "tree gets
-half the bandwidth", the mechanism is channels. Odd work goes to one structure,
-even work to another, and the two run concurrently on different SMs.
+This matters for reading the rest of the post: channels are how one collective can
+run over two structures at once. When the double binary tree later splits every
+buffer across two complementary trees, the split is by channel: half the channels
+climb one tree, the other half the other, concurrently on different SMs. The
+tuning model's derating of tree bandwidth is a separate and purely empirical
+story, which we'll get to.
 
 ## Why a 10 GB all-reduce doesn't OOM
 
@@ -912,10 +915,11 @@ tiny slices, where per-hop overheads and pipelining granularity count for more
 and more. And the dominant scaling pressure sits in the latency column
 regardless: the ring's inter-node stage count grows roughly linearly with node
 count while the tree's grows logarithmically, so every added node argues a
-little harder for the low-depth plans. That latency pressure is why the parts
-of this post that looked like small-message footnotes, the trees, LL and
-LL128, the switch offload, are the parts carrying frontier jobs, and the ring
-keeps the traffic that stays genuinely huge.
+little harder for the low-depth plans. That latency pressure helps explain why
+the mechanisms that looked like small-message footnotes earlier, the trees,
+the flag protocols, the switch offload, become increasingly important
+ingredients at frontier scale, each one where its transport and hardware
+allow, while the ring keeps the traffic that stays genuinely huge.
 
 The first thing scale changed was NCCL itself: the ring's linear latency growth
 became unacceptable, so the library grew a new algorithm. NVIDIA shipped it
@@ -1111,12 +1115,22 @@ node count, and the size where the ring catches up slides from 16 MiB at two nod
 to 32 MiB at four. That is the two lines of the sketch crossing on real wires, and
 the crossover moving in the direction the model predicts as nodes are added.
 
-One more honest wrinkle. At 16 MiB on four nodes, the free choice picked Tree
-with LL128 and ran in 525 microseconds, while pinning the tree and leaving only
-the protocol to the argmin ran the same size in 327 microseconds. The free
-choice had the right algorithm and the wrong protocol, right in the medium-size
-band whose hand-tuned correction table the tuning file apologizes for. The
-model is good. It is not perfect, and its own comments already told us where.
+One number from my first sweep deserves a confession. The free choice at
+16 MiB on four nodes initially measured 525 microseconds while a pinned tree
+ran 327, and I nearly published that as the argmin mispicking a protocol in
+the awkward middle band. A controlled rerun says otherwise: same four nodes
+for every configuration, five repetitions each, selections read from the
+tuning log rather than assumed. The free choice picks Tree with LL128, and
+Tree with LL128 is the fastest thing you can run at that size on those nodes,
+340 microseconds median against 968 for Tree with LL, 1117 for Tree with
+Simple, and 407 for the best ring. My first number was one uncontrolled
+sample on a shared fabric (I also suspected the debug logging that run
+carried; reproducing that exact environment measured 334, so it wasn't that
+either), and the rerun's own spread shows how easy such a sample is to
+collect: one of five ring repetitions spiked to nearly double its median. The
+argmin was right and my first measurement wasn't. The model still isn't an
+oracle, its own correction tables say as much, but the one time I thought I'd
+caught it red-handed, the thing that needed correcting was my benchmark.
 
 And the identity survives leaving the node: at 4 GiB on four nodes,
 reduce-scatter plus all-gather sum to 23.4 milliseconds against the pinned ring
