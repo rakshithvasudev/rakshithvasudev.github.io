@@ -1120,10 +1120,13 @@ One number from my first sweep deserves a confession. The free choice at
 ran 327, and I nearly published that as the argmin mispicking a protocol in
 the awkward middle band. A controlled rerun says otherwise: same four nodes
 for every configuration, five repetitions each, selections read from the
-tuning log rather than assumed. The free choice picks Tree with LL128, and
-Tree with LL128 is the fastest thing you can run at that size on those nodes,
-340 microseconds median against 968 for Tree with LL, 1117 for Tree with
-Simple, and 407 for the best ring. My first number was one uncontrolled
+tuning log rather than assumed. (The crossover table above keeps the original
+single-sweep values; the numbers here are medians over five runs, so the two
+sets differ by a few percent, which is expected.) The free choice picks Tree with LL128, and
+Tree with LL128 is the fastest of every algorithm this topology admits,
+each one forced and measured: 340 microseconds median against 968 for Tree
+with LL, 1117 for Tree with Simple, 407 for the best ring, and 357 for the
+forced NVLS_TREE hybrid. My first number was one uncontrolled
 sample on a shared fabric (I also suspected the debug logging that run
 carried; reproducing that exact environment measured 334, so it wasn't that
 either), and the rerun's own spread shows how easy such a sample is to
