@@ -13,9 +13,8 @@
   --tag-text: #45505c;
   --mark-bg: #fff3bf;
 
-  --font-serif: "Charter", "Bitstream Charter", "Source Serif 4", Georgia, "Times New Roman", serif;
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 
   --measure: 46rem;
 }
@@ -64,11 +63,11 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-serif);
-  font-size: 1.0625rem;
-  line-height: 1.72;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.75;
   text-rendering: optimizeLegibility;
-  font-feature-settings: "kern", "liga";
+  font-feature-settings: "kern", "liga", "cv11";
 }
 
 a { color: var(--link); text-decoration: none; }
@@ -279,7 +278,7 @@ a.tag:hover { color: var(--accent); text-decoration: none; }
 
 .post-content p { margin: 0 0 1.15rem; }
 
-.post-content strong { font-weight: 700; }
+.post-content strong { font-weight: 600; }
 
 .post-content ul, .post-content ol { padding-left: 1.4rem; margin: 0 0 1.15rem; }
 .post-content li { margin: 0.35rem 0; }
@@ -372,6 +371,7 @@ pre code {
   display: block;
   overflow-x: auto;
   max-width: 100%;
+  font-variant-numeric: tabular-nums;
 }
 
 .post-content th, .post-content td {
