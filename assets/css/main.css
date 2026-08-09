@@ -471,3 +471,31 @@ pre code {
   background: var(--bg); cursor: zoom-out; padding: 1.5vh 1.5vw;
 }
 .svg-lightbox svg { width: 97vw; height: 96vh; }
+
+/* private review mode (only active with ?review=on) */
+.rv-badge {
+  position: fixed; right: 14px; bottom: 14px; z-index: 900;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.45rem 0.7rem; font-family: var(--font-sans); font-size: 0.8rem;
+  color: var(--text-muted); box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+.rv-badge button, .rv-item button {
+  margin-left: 0.35rem; font-size: 0.75rem; cursor: pointer;
+  background: none; border: 1px solid var(--border); border-radius: 5px;
+  color: var(--text-muted); padding: 0.1rem 0.4rem;
+}
+.rv-badge button:hover, .rv-item button:hover { color: var(--accent); border-color: var(--accent); }
+.rv-chip {
+  position: absolute; z-index: 901; cursor: pointer;
+  background: var(--accent); color: var(--bg); border: none; border-radius: 6px;
+  padding: 0.2rem 0.55rem; font-size: 0.8rem; font-family: var(--font-sans);
+}
+.rv-list {
+  position: fixed; right: 14px; bottom: 60px; z-index: 900;
+  width: min(340px, 90vw); max-height: 60vh; overflow-y: auto;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.7rem; font-family: var(--font-sans); font-size: 0.82rem; color: var(--text);
+}
+.rv-item { border-bottom: 1px solid var(--border); padding: 0.45rem 0; }
+.rv-item blockquote { margin: 0 0 0.25rem; padding-left: 0.5rem; border-left: 2px solid var(--accent); color: var(--text-muted); font-style: italic; }
+.rv-item p { margin: 0 0 0.3rem; }
