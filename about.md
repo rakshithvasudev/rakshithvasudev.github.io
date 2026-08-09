@@ -4,20 +4,21 @@ title: About
 permalink: /about/
 ---
 
-I'm Rakshith Vasudev, an ML systems engineer at [Writer](https://writer.com),
-previously at Dell. I work on GPU infrastructure, distributed training, and inference.
-Most of my work sits at the boundaries between model frameworks, communication
-libraries, schedulers, networks, and hardware, which is where performance problems get
-interesting.
+I'm Rakshith Vasudev, an MLOps engineer at [Writer](https://writer.com/), previously
+at Dell. I build the infrastructure behind modern AI systems, but I'm equally
+interested in what happens inside the model itself: how architectural choices, training
+dynamics, data, and evaluation shape what a model can do. My work spans the path from
+large-scale training and GPU clusters to efficient inference, with a focus on the
+points where model behavior and system design meet.
 
-This blog is where I slow down and study parts of that stack from first principles,
-instead of settling for knowing how to operate them. I write to test my mental models,
-to separate what I genuinely understand from what I've absorbed as conventional wisdom,
-and to document the experiments and explanations that make difficult systems click.
+This blog is where I take a step back and work through how these systems and models
+actually work, beyond simply knowing which knobs to turn. I use it to test my
+understanding, question assumptions I may have picked up along the way, and document
+the experiments and explanations that make difficult systems easier to reason about.
 
-None of it is meant as the final word. I'm aiming for technically rigorous, honest
-about uncertainty, and useful to other engineers working through the same problems. If
-something is wrong, incomplete, or different from what you've seen in practice, I'd
-genuinely like to hear about it.
+I don't see any of this as the final word. I'm aiming to look under the hood, be clear
+about uncertainty, and write things that are useful to engineers working through
+similar problems. If you spot something wrong, incomplete, or inconsistent with your
+experience, I'd appreciate hearing from you.
 
 The best way to reach me is [GitHub](https://github.com/rakshithvasudev).
