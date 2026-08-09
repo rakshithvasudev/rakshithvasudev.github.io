@@ -3,7 +3,10 @@ description: Notes on distributed training, GPUs, and learning in public
 url: "https://rakshithvasudev.github.io"
 author: Rakshith Vasudev
 github_username: rakshithvasudev
-theme: minima
+
+markdown: kramdown
+highlighter: rouge
+
 plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
