@@ -1146,8 +1146,10 @@ One caveat before you go read these reports yourself: in mixture-of-experts
 training the bulkiest traffic has moved to all-to-all expert dispatch (K3's
 MoonEP, the pipeline co-design in
 [DeepSeek-V3's report](https://arxiv.org/abs/2412.19437), and
-[GLM-5](https://arxiv.org/abs/2602.15763)'s hierarchical all-to-all that
-splits the intra-node and inter-node halves, the same fabric-level split as
+the [GLM family](https://arxiv.org/abs/2602.15763)'s hierarchical
+all-to-all (the line is at [GLM-5.2](https://huggingface.co/blog/zai-org/glm-52-blog)
+as I write this), which splits the intra-node and inter-node halves, the same
+fabric-level split as
 NCCL's chain-inside-node, tree-across-nodes construction). That's a different
 collective with different math, and it deserves its own post. Gradient sync
 and tensor parallelism still run on the reduce-scatter, all-gather, and
@@ -1521,7 +1523,8 @@ throughout.
   source for the histogram all-reduce and the decomposed tensor-parallel
   all-reduce quoted above, and
   [DeepSeek-V3](https://arxiv.org/abs/2412.19437) and
-  [GLM-5](https://arxiv.org/abs/2602.15763) for the all-to-all-centric side of
-  mixture-of-experts communication.
+  the [GLM-5 family report](https://arxiv.org/abs/2602.15763) (current release:
+  [GLM-5.2](https://huggingface.co/blog/zai-org/glm-52-blog)) for the
+  all-to-all-centric side of mixture-of-experts communication.
 - [NCCL environment variables](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html),
   including `NCCL_ALGO`, `NCCL_PROTO`, and the debug switches used above.
