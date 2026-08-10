@@ -444,8 +444,10 @@ set is bounded by the selected transport and algorithm rather than growing
 proportionally with the tensor.
 Some paths allocate most of that state when the communicator is created; others
 materialize working buffers the first time the path runs, which is exactly what
-the measurement below catches NVLS doing. Either way, "how big is the tensor"
-never enters the memory story. The
+the measurement below catches NVLS doing. Either way, tensor size does not
+directly set the size of the communication staging: it determines how long the
+data streams through the selected path, not a message-proportional temporary
+allocation. The
 registered-buffer paths later in this post (NVLS user-buffer registration and the
 network's direct modes) push this to its logical end: even the fixed staging copy
 disappears, and the hardware reads your tensors where they sit.
