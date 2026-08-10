@@ -357,8 +357,7 @@ buffer proportional to the message", all-reduce should be scary. It isn't, and t
 short answer is that the gigabytes never live anywhere as a whole: data streams
 through a handful of fixed-size reusable transfer slots, and the tensor's size
 only determines how long the stream runs, never how wide the staging window gets.
-The precise version is worth having, and the same principle holds for every
-algorithm in this post.
+The same principle holds for every algorithm in this post.
 
 First, nothing proportional to the message is ever allocated, because arriving
 data is consumed the moment it lands. Look at the ring loop again: the workhorse
