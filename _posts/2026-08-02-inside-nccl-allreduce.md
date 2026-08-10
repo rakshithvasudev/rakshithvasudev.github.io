@@ -350,15 +350,15 @@ story, which we'll get to.
 
 The last post spent a section on why FSDP's photocopies don't blow up memory. The
 same worry transfers here, sharpened. Eight ranks all-reduce a 100 GB tensor in
-place (I ran exactly this; the measurement closes the section), so over the
+place, so over the
 course of the collective each GPU receives on the order of a hundred gigabytes
 of other GPUs' partial sums. Where does all of that land? If your instinct says "some staging
 buffer proportional to the message", all-reduce should be scary. It isn't, and the
 short answer is that the gigabytes never live anywhere as a whole: data streams
 through a handful of fixed-size reusable transfer slots, and the tensor's size
 only determines how long the stream runs, never how wide the staging window gets.
-The precise version is worth having, because it's the same streaming discipline
-every algorithm in this post shares.
+The precise version is worth having, and the same principle holds for every
+algorithm in this post.
 
 First, nothing proportional to the message is ever allocated, because arriving
 data is consumed the moment it lands. Look at the ring loop again: the workhorse
