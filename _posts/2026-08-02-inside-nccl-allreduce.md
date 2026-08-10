@@ -349,15 +349,16 @@ story, which we'll get to.
 ## Why a 100 GB all-reduce doesn't OOM
 
 The last post spent a section on why FSDP's photocopies don't blow up memory. The
-same worry transfers here, sharpened. Eight ranks all-reduce a 100 GB tensor in
-place, so over the
+same worry transfers here, sharpened. Eight ranks each hold a 100 GB tensor and
+all-reduce it in place, so over the
 course of the collective each GPU receives on the order of a hundred gigabytes
 of other GPUs' partial sums. Where does all of that land? If your instinct says "some staging
 buffer proportional to the message", all-reduce should be scary. It isn't, and the
-short answer is that the gigabytes never live anywhere as a whole: data streams
-through a handful of fixed-size reusable transfer slots, and the tensor's size
-only determines how long the stream runs, never how wide the staging window gets.
-The same principle holds for every algorithm in this post.
+short answer is that the gigabytes never live anywhere as a whole: every path
+streams the tensor through a bounded working set whose size is set by the path,
+not by the tensor. The same principle holds for every algorithm in this post;
+what changes between algorithms is the constant. For the ring and the tree, the
+story is easiest to see in the peer FIFOs.
 
 First, nothing proportional to the message is ever allocated, because arriving
 data is consumed the moment it lands. Look at the ring loop again: the workhorse
@@ -375,9 +376,9 @@ for Simple, 512 KiB for LL, 4.6875 MiB for LL128 ([`src/init.cc:810`](https://gi
 into `NCCL_STEPS = 8` slots. These are allocated when the communicator is created
 (that memory bump you see at `init_process_group` time is exactly this, plus
 peers and channels), and then reused for every collective for the life of the
-communicator. A 4 KB all-reduce and the measured 100 GB all-reduce below flow
-through the same slots: a bigger tensor lengthens the stream, it does not widen
-the window.
+communicator. On these ring and tree paths, a 4 KB all-reduce and a 100 GB one
+flow through the same slots: a bigger tensor lengthens the stream, it does not
+widen the window.
 
 Third, backpressure. The sender is allowed to run at most 8 slots ahead of the
 receiver: `waitPeer` ([`src/device/prims_simple.h:100`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/prims_simple.h#L100)) spins until the receiver's
@@ -437,24 +438,38 @@ through a lock:
 Add it up and the total staging per rank is channels times connections times
 roughly 9 MiB (the three protocol buffers together, carved out per connection in
 [`src/transport/p2p.cc:488`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/p2p.cc#L488)). Order of 100 to 300 MiB for a typical communicator,
-fixed at init, flat forever after. That's why NCCL's memory footprint shows up
-when you create the communicator and then never moves during training, and why
-"how big is the tensor" never appears in the memory story at all. The
+and that number is the point-to-point protocol buffers, not everything NCCL
+will ever hold. The durable principle is narrower: the communication working
+set is bounded by the selected transport and algorithm, never by the tensor.
+Some paths allocate most of that state when the communicator is created; others
+materialize working buffers the first time the path runs, which is exactly what
+the measurement below catches NVLS doing. Either way, "how big is the tensor"
+never enters the memory story. The
 registered-buffer paths later in this post (NVLS user-buffer registration and the
 network's direct modes) push this to its logical end: even the fixed staging copy
 disappears, and the hardware reads your tensors where they sit.
 
-I measured this at the far end of plausible. On this post's 8x H200 node, a
-single in-place all-reduce of 100 GB (the decimal kind, 100,000,000,000 bytes,
-about 93.1 GiB of user tensor per GPU) picked the same NVLS plan as 4 GiB and
-ran at 483 GB/s of bus bandwidth, a hair above the 4 GiB plateau. The memory
-ledger, sampled every millisecond while it ran: the communicator's persistent
-footprint was about 1 GiB; with the tensor already allocated, peak GPU memory
-during the collective rose by 4.6 GiB (the NVLS path's working buffers, created
-at first use), and a 4 GiB control measured the same way rose by the same
-4.6 GiB to the MiB, over the same ordinary unregistered-buffer path. The tensor
-got 23 times bigger and the collective-time memory did not move. On this
-machine and this path, the staging is bounded; the stream just runs longer.
+NVLS changes the constant, not the rule. Its multicast path stages through a
+different and larger set of working buffers than the peer FIFOs above, and on
+this machine they showed up not at communicator creation but the first time the
+path ran. So the question that matters is not whether every byte of NCCL state
+exists at init. It is whether the working set grows with the tensor.
+
+I measured exactly that, at the far end of plausible. On this post's 8x H200
+node, each of the eight GPUs held a 100 GB tensor (the decimal kind,
+100,000,000,000 bytes, about 93.1 GiB) and all-reduced it in place. nccl-tests
+itself allocates several message-sized test buffers, so this point ran on a
+single-buffer harness making the same `ncclAllReduce` call, checked against
+nccl-tests at 4 GiB to within 0.1 percent. The run picked the same unregistered
+NVLS plan as 4 GiB and landed at 483 GB/s of bus bandwidth, a hair above the
+4 GiB plateau. The memory ledger, sampled every millisecond at whole-GPU
+resolution: about 1 GiB of persistent communicator footprint, and, with the
+user tensor already allocated, a peak of 4718.9 MiB of additional memory while
+the collective ran, against 4718.9 MiB for the 4 GiB control measured
+identically. The 93.1 GiB tensor pays its own bill, obviously; the question was
+whether NCCL needed another tensor-sized buffer on top of it, and it did not.
+The message grew about 23 times and, within the resolution of this measurement,
+the collective-time working set did not grow at all.
 
 ## Where the ring hurts
 
