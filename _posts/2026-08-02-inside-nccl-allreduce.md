@@ -356,8 +356,8 @@ of other GPUs' partial sums. Where does all of that land? If your instinct says 
 buffer proportional to the message", all-reduce should be scary. It isn't, and the
 short answer is that the gigabytes never live anywhere as a whole: every path
 streams the tensor through a bounded working set whose size is set by the path,
-not by the tensor. The same principle holds for every algorithm in this post;
-what changes between algorithms is the constant. For the ring and the tree, the
+not by the tensor. The same principle holds across the ring, tree, and NVLS
+paths traced here; what changes between algorithms is the constant. For the ring and the tree, the
 story is easiest to see in the peer FIFOs.
 
 First, nothing proportional to the message is ever allocated, because arriving
@@ -440,7 +440,8 @@ roughly 9 MiB (the three protocol buffers together, carved out per connection in
 [`src/transport/p2p.cc:488`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/p2p.cc#L488)). Order of 100 to 300 MiB for a typical communicator,
 and that number is the point-to-point protocol buffers, not everything NCCL
 will ever hold. The durable principle is narrower: the communication working
-set is bounded by the selected transport and algorithm, never by the tensor.
+set is bounded by the selected transport and algorithm rather than growing
+proportionally with the tensor.
 Some paths allocate most of that state when the communicator is created; others
 materialize working buffers the first time the path runs, which is exactly what
 the measurement below catches NVLS doing. Either way, "how big is the tensor"
