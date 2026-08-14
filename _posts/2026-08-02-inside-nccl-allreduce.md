@@ -37,13 +37,13 @@ If you only take three lines from this post:
 
 1. Every all-reduce pays two costs: latency, the fixed overhead of each
    communication step, and bandwidth, the time spent moving bytes. Among
-   conventional point-to-point all-reduce algorithms, a ring minimizes the
-   total data each GPU sends, so it usually delivers the best sustained
-   bandwidth for large tensors. But it needs `2(n-1)` sequential
-   steps, so its latency grows linearly with the number of GPUs. A tree needs
-   only a logarithmic number of steps, so it wins for small tensors, where
-   latency dominates. In practice, trees sustain less bandwidth than rings, so
-   large tensors usually go back to the ring.
+   conventional point-to-point all-reduce algorithms the ring minimizes the
+   total data each GPU sends, which usually makes it the bandwidth winner for
+   large tensors, but its `2(n-1)` sequential steps mean latency that grows
+   linearly with GPU count. A tree gets there in a logarithmic number of
+   steps instead, so small tensors, where latency dominates, go to the tree;
+   in practice trees sustain less bandwidth than rings, so the largest
+   tensors usually go back to the ring.
 2. There is no threshold constant that picks between them. NCCL models every
    algorithm and protocol pair as `time = latency + bytes/bandwidth` and takes the
    argmin, per call, at enqueue time.
@@ -458,7 +458,7 @@ this machine they showed up not at communicator creation but the first time the
 path ran. So the question that matters is not whether every byte of NCCL state
 exists at init. It is whether the working set grows with the tensor.
 
-I measured exactly that, at the far end of plausible. On this post's 8x H200
+I measured exactly that, at a larger size. On this post's 8x H200
 node, each of the eight GPUs held a 100 GB tensor (the decimal kind,
 100,000,000,000 bytes, about 93.1 GiB) and all-reduced it in place. nccl-tests
 itself allocates several message-sized test buffers, so this point ran on a
@@ -1096,7 +1096,7 @@ model through the NIC latency added to every inter-node hop
 and the tree stays the right answer out to larger sizes than it would on a
 lower-latency fabric.
 
-The sentence to keep from this section: the cost model has no idea what brand
+The cost model has no idea what brand
 anything is. Hardware zeroes some rows and sets some constants, and the same
 argmin over whatever remains explains everything the log shows you, on a
 PCIe box from 2018 or on whatever ships next year.
@@ -1106,7 +1106,7 @@ PCIe box from 2018 or on whatever ships next year.
 Everything above was worked out on a whiteboard, three GPUs here, a node
 there. Does any of it still matter when the job has thousands of GPUs, or does
 scale wash the tuning machinery out? It matters more, and the pattern across
-the frontier reports fits in one sentence: at extreme scale, collective
+the frontier reports is consistent: at extreme scale, collective
 communication stops being a library implementation detail and becomes an input
 to model and system architecture. NCCL running the biggest jobs in the world
 is not news; that's its day job. What I actually wanted to know is which of
@@ -1121,12 +1121,12 @@ three. The ring cuts the buffer into n chunks. Across 16,384 ranks, a 1 GiB
 gradient bucket, the kind that feels enormous, is a 64 KiB chunk per rank. To
 be precise about what that does and does not mean: NCCL still prices the
 operation as a 1 GiB collective; the per-rank chunk is not what goes into the
-cost tables. What the division changes is the physical texture of the work:
+cost tables. What the division changes is what the work physically looks like:
 tiny slices, where per-hop overheads and pipelining granularity count for more
 and more. And the dominant scaling pressure sits in the latency column
 regardless: the ring's inter-node stage count grows roughly linearly with node
-count while the tree's grows logarithmically, so every added node argues a
-little harder for the low-depth plans. That latency pressure helps explain why
+count while the tree's grows logarithmically, so every added node favors the
+low-latency plans a little more. That is why
 the mechanisms that looked like small-message footnotes earlier, the trees,
 the flag protocols, the switch offload, become increasingly important
 ingredients at frontier scale, each one where its transport and hardware
@@ -1195,8 +1195,7 @@ operating on sequence-sharded activations so each token's block
 representation materializes on exactly one rank. In decoding, the merge and
 the RMSNorm that follow are fused into the preceding all-reduce, so the
 collective absorbs a kernel instead of being split by one. That's the
-identity this post opened with, pried apart in one direction and welded shut
-in the other.
+equation this post opened with, used in both directions.
 
 One caveat before you go read these reports yourself: in mixture-of-experts
 training the bulkiest traffic has moved to all-to-all expert dispatch (MoonEP
@@ -1245,7 +1244,7 @@ AllReduce: 1048576 Bytes -> Algo RING proto LL channel{Lo..Hi}={0..23}
 AllReduce: 2097152 Bytes -> Algo NVLS proto SIMPLE channel{Lo..Hi}={0..15}
 ```
 
-Those lines are measured, not invented: a single 8x H100 node, NCCL 2.30.7 built
+Those lines come from a real sweep: a single 8x H100 node, NCCL 2.30.7 built
 from the same commit every file reference in this post points at, swept from 256 B
 to 4 GiB. The walk on this machine is simpler than the full menu: ring with LL up
 to 1 MiB, then straight to the switch from 2 MiB on, everything on Simple after
@@ -1271,8 +1270,8 @@ here are the in-place halves, the PyTorch gradient case, on the H100 node):
 
 The flag protocol is worth 45 percent at 1 MiB, right in the awkward middle band.
 At 256 B both sit on the same ~50 microsecond launch floor; single node, so the
-latency drama the tree section promised needs node counts to appear. It appears
-one section down.
+latency drama the tree section promised needs node counts to appear; it shows
+up in the multi-node sweep below.
 
 Now let the argmin run free again, so the algorithm itself may change. This
 experiment asks a different question from the last one: does moving the
@@ -1287,8 +1286,8 @@ bandwidth:
 | 4 GiB | 475 GB/s | 366 GB/s |
 
 A near tie where NVLS first takes over, growing to 30 percent at full size,
-against the doubled bandwidth the cost table promises. The growth pattern is the
-bandwidth term of the model earning its keep: as bytes grow, the switch's fixed
+against the doubled bandwidth the cost table promises. The growth pattern follows the
+bandwidth term of the model: as bytes grow, the switch's fixed
 entry fee stops mattering and only its halved per-link traffic remains. The H200
 node lands within a few percent of every number here.
 
@@ -1301,8 +1300,8 @@ halves separately and compare against running them fused:
                    NVLS all-reduce                                         15,808 us
 ```
 
-The identity holds to within two percent on real wires. And NVLS beats it by a
-quarter, which is the measured value of not being made of those two halves.
+The equation holds to within two percent on real wires. And NVLS, which isn't
+built from those two halves, beats it by a quarter.
 
 ## The same sweep, off the node
 
@@ -1345,8 +1344,8 @@ Pin tree and ring, and the crossover the sketch promised becomes numbers:
 
 Read the columns against the cost model. The ring's small-message floor is its
 linear hop count made visible: roughly 100 microseconds at two nodes, 229 at four.
-The tree's floor barely moves, 44 to 71, logarithmic depth doing exactly what it
-was hired to do. So the tree's advantage at 256 B grows from 2.3x to 3.2x with the
+The tree's floor barely moves, 44 to 71: logarithmic depth, as the model
+predicts. So the tree's advantage at 256 B grows from 2.3x to 3.2x with the
 node count, and the size where the ring catches up slides from 16 MiB at two nodes
 to 32 MiB at four. That is the two lines of the sketch crossing on real wires, and
 the crossover moving in the direction the model predicts as nodes are added.
@@ -1371,7 +1370,7 @@ argmin was right and my first measurement wasn't. The model still isn't an
 oracle, its own correction tables say as much, but the one time I thought I'd
 caught it red-handed, the thing that needed correcting was my benchmark.
 
-And the identity survives leaving the node: at 4 GiB on four nodes,
+And the equation survives leaving the node: at 4 GiB on four nodes,
 reduce-scatter plus all-gather sum to 23.4 milliseconds against the pinned ring
 all-reduce's 22.8, within three percent over EFA.
 
@@ -1417,7 +1416,7 @@ Read the rows and the columns separately, because they are the two dials, finall
 turned independently. Down any column runs the message-size dial: every topology
 climbs to its own bandwidth plateau, about 470 GB/s for the switch on one node,
 about 460 for the hybrid on two, about 360 for the ring on four. Across any row
-runs the node-count dial, and the 16 MiB row is the whole argument in one line:
+runs the node-count dial, and the 16 MiB row shows it directly:
 the same collective that runs fastest as a ring inside one node (with the switch
 in a dead heat) hands to the hybrid at two nodes and to the tree at four. Within
 one pool of machines, the only thing that changes across that row is how many
@@ -1500,8 +1499,7 @@ at 16 versus 32 MiB is real in direction but smaller than power-of-two sampling
 made it look. Second, away from the crossover boundaries the free choice
 selects the same plan as the measured winner in every cell; right at the
 borders it sometimes holds the neighboring plan instead, and five-run reruns
-put that toll between three and twelve percent, the price a model pays for
-drawing clean lines through noisy territory.
+put that toll between three and twelve percent.
 
 One stress point past the table's right edge: a single in-place all-reduce of
 100 GB (100,000,000,000 bytes) on the same one-node machine picked the same
@@ -1518,7 +1516,7 @@ What I have now:
   who-does-what structures times three wire protocols against your message,
   your topology, and your transport's capabilities, `latency + bytes/bandwidth`,
   cheapest wins, and launches that physical plan. Sometimes the plan is the
-  ring. Sometimes it's a tree. Sometimes the switch does the math.
+  ring, sometimes a tree, and sometimes the switch does the math.
 - The ring is built from five primitives (`send`, `recvReduceSend`,
   `recvReduceCopySend`, `recvCopySend`, `recv`), and the tree reuses the same
   set plus two more for its root; the reduce-scatter plus all-gather structure
