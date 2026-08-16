@@ -231,7 +231,7 @@ are what's optimal: every hop carries fresh, never-repeated data, so each GPU
 sends `(2(n-1)/n) * S` total for an `S`-byte buffer, a hair under `2S`, which is
 the proven floor for any all-reduce built out of point-to-point sends between
 endpoints, however clever. Hold onto that qualifier about endpoints; hardware
-shows up later in this post that changes the assumption it rests on. Latency
+that breaks that assumption shows up later in this post. Latency
 linear, bandwidth optimal. Keep that trade in your head; the rest of this post is
 NCCL renegotiating it from every direction.
 
@@ -455,8 +455,8 @@ disappears, and the hardware reads your tensors where they sit.
 NVLS changes the constant, not the rule. Its multicast path stages through a
 different and larger set of working buffers than the peer FIFOs above, and on
 this machine they showed up not at communicator creation but the first time the
-path ran. So the question that matters is not whether every byte of NCCL state
-exists at init. It is whether the working set grows with the tensor.
+path ran. So the question that matters is whether the working set grows with
+the tensor.
 
 I measured exactly that, at a larger size. On this post's 8x H200
 node, each of the eight GPUs held a 100 GB tensor (the decimal kind,
@@ -719,7 +719,7 @@ ring:  2(nRanks-1) hops:  (2(nRanks-1) - 2(nNodes-1)) intra-node
 tree:  2((ranksPerNode-1) intra-node + log2(nNodes) network hops)
 ```
 
-Read the last line closely: the network term, the
+The last line is the one that matters: the network term, the
 expensive one, went from linear in nodes to logarithmic. At 16 nodes, ring pays 30
 network-latency units, tree pays 8. At 128 nodes it's 254 versus 14. Meanwhile the
 bandwidth table charges the tree for its structural overheads (a factor around 0.9,
@@ -727,7 +727,7 @@ plus per-architecture ceilings), so the model naturally produces the classic
 picture: tree wins small, ring wins large, and the crossover slides upward with
 node count. No threshold anywhere; it falls out of two lines crossing.
 
-Notice that two independent dials moved in that story, and it pays to keep them
+Two independent dials moved in that story, and they're worth keeping
 separate. Message size moves the bytes-over-bandwidth term: more bytes, more
 reason to care about sustained throughput. Node count moves the latency term:
 more nodes, and the gap between the ring's roughly linear network path and the
@@ -924,7 +924,7 @@ to name as a group; NVLS needs an address that stands for the same buffer on
 every GPU at once, so that a single memory operation becomes a group operation
 the fabric can act on. That is what CUDA multicast memory provides.
 
-The mechanism sits on CUDA multicast memory: one virtual address range that names
+It gives you one virtual address range that names
 a group of physical memories, one per GPU, so that a single load or store can
 address all of them at once. At init, every local GPU binds
 NCCL's staging buffers into a shared multicast object (`cuMulticastCreate`,
@@ -1081,7 +1081,7 @@ from the network at all.
 Cloud fabrics slot into the same table rather than getting special treatment.
 AWS's EFA, to take the biggest one, has no in-network reduction and no CollNet
 plugin, so it's the "moves bytes, does no math" row above. Its one extra wrinkle
-is the LL128 bet, and it's a clean example of capability framing, because the
+is the LL128 bet, and it's a clean example of the capability story above, because the
 answer changed over the years without NCCL changing at all. LL128 is legal only
 where the transport can promise that a 128-byte write lands whole and in order.
 EFA's base transport makes no such promise, so the
@@ -1114,8 +1114,7 @@ these mechanisms does the heavy lifting up there, and what gives out first.
 Three papers answer that, and reading them after tracing the source is a
 different experience than reading them before.
 
-Scale changes more than the hop counts; it also changes the grain of what each
-stage of a collective is actually carrying. Do one division before anything
+Do one division before anything
 else, because it rearranged how I read all
 three. The ring cuts the buffer into n chunks. Across 16,384 ranks, a 1 GiB
 gradient bucket, the kind that feels enormous, is a 64 KiB chunk per rank. To
@@ -1250,9 +1249,9 @@ to 4 GiB. The walk on this machine is simpler than the full menu: ring with LL u
 to 1 MiB, then straight to the switch from 2 MiB on, everything on Simple after
 that. No tree at any size, which the chain-inside-the-node section predicted. No
 LL128 window either; NVLS arrives before LL stops winning. The same sweep on an
-8x H200 node decides identically, which is its own small lesson: the crossovers
+8x H200 node decides identically: the crossovers
 follow the interconnect, and these two machines share their NVSwitch generation.
-Your fabric will draw its own map, which is rather the point. Against the
+Your fabric will draw its own map, which is the point. Against the
 predictions written down above: three for three, with the missing LL128 window
 as the one detail the hand-waved version didn't see coming and the argmin did.
 
@@ -1270,7 +1269,7 @@ here are the in-place halves, the PyTorch gradient case, on the H100 node):
 
 The flag protocol is worth 45 percent at 1 MiB, right in the awkward middle band.
 At 256 B both sit on the same ~50 microsecond launch floor; single node, so the
-latency drama the tree section promised needs node counts to appear; it shows
+latency gap the tree section promised needs node counts to appear; it shows
 up in the multi-node sweep below.
 
 Now let the argmin run free again, so the algorithm itself may change. This
@@ -1322,8 +1321,8 @@ The argmin draws a different map:
 | 32 MiB and up | NVLS_TREE + Simple | Ring + LL128, Simple from 512 MiB |
 
 Everything the single node deleted from the menu is back. The tree owns the small
-and medium sizes. The protocols climb LL to LL128 to Simple inside each algorithm's
-reign. And at two nodes the bulk sizes go to NVLS_TREE, the hybrid from the switch
+and medium sizes. The protocols climb LL to LL128 to Simple within each algorithm's
+range. And at two nodes the bulk sizes go to NVLS_TREE, the hybrid from the switch
 section: NVSwitch arithmetic inside each node, tree traffic between nodes, and no
 cooperation needed from a network that does no math. At 4 GiB the hybrid moves 464
 GB/s against the pinned ring's 366. Between one, two, and four nodes, the sweeps
@@ -1374,8 +1373,8 @@ And the equation survives leaving the node: at 4 GiB on four nodes,
 reduce-scatter plus all-gather sum to 23.4 milliseconds against the pinned ring
 all-reduce's 22.8, within three percent over EFA.
 
-I later reran the two-node sweep on a pair of H100 nodes, and the result is the
-right closing note for all of this. Same map, same sequence of regimes, but the
+I later reran the two-node sweep on a pair of H100 nodes, and the result is a
+good place to end. Same map, same sequence of regimes, but the
 border posts sit one power of two off: LL hands over to LL128 at 128 KiB instead
 of 256, and NVLS_TREE takes the bulk sizes from 64 MiB instead of 32 (468 GB/s
 against the ring's 345 at 4 GiB). Same fabric generation, same switches, slightly
@@ -1412,8 +1411,8 @@ regime. The fastest measured plan in each cell, with its bus bandwidth:
 | 1 GiB | NVLS, 461 GB/s | NVLS_TREE, 441 GB/s | Ring, 337 GB/s |
 | 4 GiB | NVLS, 471 GB/s | NVLS_TREE, 459 GB/s | Ring, 357 GB/s |
 
-Read the rows and the columns separately, because they are the two dials, finally
-turned independently. Down any column runs the message-size dial: every topology
+The rows and the columns are the two dials turned independently. Down any
+column runs the message-size dial: every topology
 climbs to its own bandwidth plateau, about 470 GB/s for the switch on one node,
 about 460 for the hybrid on two, about 360 for the ring on four. Across any row
 runs the node-count dial, and the 16 MiB row shows it directly:
@@ -1426,8 +1425,8 @@ the tree never wins a cell there, and it never wins a bulk cell anywhere. Its
 one win sits exactly where the model says it should, the smallest payload on
 the deepest topology. At the bulk end the bandwidth term takes over on every
 topology, and the four-node column hands the biggest payloads to the plain
-ring, which suggests the hybrid's inter-node half gives back enough of its
-switch half's gains to lose at those sizes.
+ring, which suggests that at those sizes the hybrid loses more on its
+inter-node half than the switch half gains.
 
 <div style="text-align:center">
 <svg viewBox="0 0 680 268" width="100%" style="height:auto" role="img" aria-label="Measured bus bandwidth versus message size on 1, 2, and 4 nodes: three curves rising to plateaus of 471, 459, and 357 GB/s">
