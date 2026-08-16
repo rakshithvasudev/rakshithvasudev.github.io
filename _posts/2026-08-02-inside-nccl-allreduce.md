@@ -40,7 +40,7 @@ If you only take three lines from this post:
    conventional point-to-point all-reduce algorithms the ring minimizes the
    total data each GPU sends, which usually makes it the bandwidth winner for
    large tensors, but its `2(n-1)` sequential steps mean latency that grows
-   linearly with GPU count. A tree gets there in a logarithmic number of
+   linearly with GPU count. A tree finishes in a logarithmic number of
    steps instead, so small tensors, where latency dominates, go to the tree;
    in practice trees sustain less bandwidth than rings, so the largest
    tensors usually go back to the ring.
@@ -443,7 +443,7 @@ will ever hold. The durable principle is narrower: the communication working
 set is bounded by the selected transport and algorithm rather than growing
 proportionally with the tensor.
 Some paths allocate most of that state when the communicator is created; others
-materialize working buffers the first time the path runs, which is exactly what
+materialize working buffers the first time the path runs, which is what
 the measurement below catches NVLS doing. Either way, tensor size does not
 directly set the size of the communication staging: it determines how long the
 data streams through the selected path, not a message-proportional temporary
@@ -623,7 +623,7 @@ around). A chunk bounces
 off the root and heads back down while later chunks are still climbing. The split
 is 70/30 in favor of the reduce side for the low-latency protocols, because
 reducing three children's data costs more than forwarding to three children (the
-comment at [`src/device/all_reduce.h:161`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L161) says exactly this).
+comment at [`src/device/all_reduce.h:161`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/device/all_reduce.h#L161) says as much).
 
 **There's no whole-message wait anywhere.** Same slicing and 8-slot FIFOs as the
 ring, so tree latency really is proportional to depth, not depth times message
@@ -806,7 +806,7 @@ extra warp for exactly this when launching Simple ring kernels
 8-byte half of the line carries its own flag right beside its own data, so as
 long as the transport delivers 8 bytes atomically (NVLink does, RDMA writes do),
 a flag can never show up ahead of the data it vouches for. The comment above the
-struct spells out exactly this. A receiver spinning on the flags can therefore
+struct spells this out. A receiver spinning on the flags can therefore
 consume the data the moment it sees them. No fence, no tail pointer, no waiting
 for a whole slot:
 
