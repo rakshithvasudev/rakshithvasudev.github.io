@@ -20,14 +20,16 @@ measured, it stops winning once messages get large: the cost model moves to a
 plan where the GPUs stop sending to each other and the NVSwitch does the
 reduction itself.
 
-Said as three plain claims, since the whole post is really me testing them. One:
-there is no best all-reduce, only a best all-reduce for this message on this
-machine. Two: NCCL behaves like a database query planner.
-The hardware decides which algorithm and protocol pairings are legal, and a cost
-model estimates each pairing's runtime and picks a winner, per call. Three: the winner
-mostly comes down to a tradeoff between fixed per-call latency and sustained
-bandwidth, and switches that can reduce in hardware change that tradeoff
-instead of just competing inside it.
+Said as three plain claims, since the whole post is really me testing them:
+
+1. There is no best all-reduce, only a best all-reduce for this message on
+   this machine.
+2. NCCL behaves like a database query planner. The hardware decides which
+   algorithm and protocol pairings are legal, and a cost model estimates each
+   pairing's runtime and picks a winner, per call.
+3. The winner mostly comes down to a tradeoff between fixed per-call latency
+   and sustained bandwidth, and switches that can reduce in hardware change
+   that tradeoff instead of just competing inside it.
 
 This post is a guided tour of that machinery, with file and line references into the
 source so you can check everything I claim. Everything below is from NCCL 2.30
