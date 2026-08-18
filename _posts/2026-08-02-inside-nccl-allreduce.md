@@ -15,10 +15,10 @@ and the picture underneath is much better than the one I was carrying. NCCL does
 protocols to carry them. Each time you call it, it estimates the cost of each
 valid pairing for your message and hardware, then selects the lowest-cost
 candidate. The ring you learned from
-the classic blog posts is just one row of that menu, and on the 8x H100 machine I
-measured, it stops being the pick once messages get large: the estimate starts
-favoring an algorithm in which no GPU addresses any other GPU, because the switch
-hardware does the arithmetic.
+the classic blog posts is just one option, and on the 8x H100 machine I
+measured, it stops winning once messages get large: the cost model moves to a
+plan where the GPUs stop sending to each other and the NVSwitch does the
+reduction itself.
 
 Said as three plain claims, since the whole post is really me testing them. One:
 there is no best all-reduce, only a best all-reduce for this message on this

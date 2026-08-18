@@ -11,3 +11,8 @@ plugins:
   - jekyll-seo-tag
   - jekyll-sitemap
   - jekyll-feed
+
+# GoatCounter site code: the subdomain of your goatcounter.com dashboard,
+# i.e. "rakshithvasudev" for https://rakshithvasudev.goatcounter.com.
+# Leave blank to disable analytics entirely.
+goatcounter:
