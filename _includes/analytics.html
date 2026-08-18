@@ -1,0 +1,44 @@
+{%- comment -%}
+GoatCounter beacon. Inert unless site.goatcounter is set in _config.yml, and
+only emitted for production builds, so `jekyll serve` never pollutes the stats.
+{%- endcomment -%}
+{%- if site.goatcounter and jekyll.environment == "production" -%}
+<script data-goatcounter="https://{{ site.goatcounter }}.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+{%- if page.layout == "post" -%}
+<script>
+  // Read-completion event: 90% scrolled AND 15s on the page, so a bounce that
+  // lands at the bottom does not count as a read. Fires at most once per load.
+  (function () {
+    var landed = new Date().getTime();
+    var done = false;
+
+    function send(tries) {
+      if (!window.goatcounter || !window.goatcounter.count) {
+        // count.js is async; it may not have landed yet.
+        if (tries > 0) setTimeout(function () { send(tries - 1); }, 2000);
+        return;
+      }
+      window.goatcounter.count({
+        path: "read-complete" + location.pathname,
+        title: "Read complete: " + {{ page.title | jsonify }},
+        event: true
+      });
+    }
+
+    function onScroll() {
+      if (done) return;
+      var doc = document.documentElement;
+      var progress = (window.scrollY + window.innerHeight) / doc.scrollHeight;
+      if (progress < 0.9) return;
+      if (new Date().getTime() - landed < 15000) return;
+      done = true;
+      window.removeEventListener("scroll", onScroll);
+      send(5);
+    }
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+  })();
+</script>
+{%- endif -%}
+{%- endif -%}
