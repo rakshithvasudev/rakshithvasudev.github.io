@@ -8,7 +8,7 @@ tags: [fsdp, distributed-training, pytorch]
 If you learned distributed training through DDP, you probably carry two instincts: after
 the backward pass, all-reduce the gradients; and if only one place has the freshest
 weights, broadcast them out. I carried both into FSDP and they cost me real confusion,
-because both are wrong there. Not slightly wrong, wrong in a way that means the mental
+because both are wrong there. Not slightly wrong, either: the mental
 model underneath is wrong. Working out why fixed my understanding of FSDP more than
 anything else, so this post is that explanation: what all-gather and reduce-scatter
 actually do, why reduce-scatter specifically is the right collective after backward, and
@@ -121,12 +121,12 @@ copies in sync.
 In FSDP, the model exists exactly once, chopped into W pieces. GPU k permanently owns
 piece k of every weight tensor, and of its gradient and optimizer state too. No full
 copy of anything exists anywhere at rest. Full size tensors only show up as short lived
-photocopies during compute, and then they get shredded. (If you're already asking "why
-doesn't gathering full tensors blow up memory?", good question. Hold it until the next
+photocopies during compute, and then they get shredded. (If you're already wondering
+why gathering full tensors doesn't blow up memory, hold that thought until the next
 section.)
 
-Once this picture is in your head, every "which collective goes here?" question answers
-itself. You just ask: in this world, who is allowed to permanently hold what? Both of
+Once this picture is in your head, one question settles every collective choice: in
+this world, who is allowed to permanently hold what? Both of
 the DDP instincts above are symptoms of the same bug: imagining full copies that need to
 be kept in sync, in a world that deliberately has none.
 
@@ -172,7 +172,7 @@ giant photocopy, and that can absolutely OOM.
 
 ## Why backward needs a different collective
 
-Here's the question that unlocked this for me. FSDP really has two communication jobs,
+What unlocked this for me was one question. FSDP really has two communication jobs,
 attached to two different things. Parameters get all-gathered whenever compute needs
 them in full: before a layer's forward, and, because the photocopy gets shredded right
 after forward, usually again before that layer's backward. Gradients get
@@ -197,7 +197,7 @@ average:   [4, 2, 6, 4]   <- computed in flight, never assembled on any GPU
 ```
 
 Disagreeing copies can't be concatenated, they have to be combined. That combining step
-is the "reduce". So the rule that generalizes: **reduce shows up exactly when the
+is the "reduce". So the general rule: **reduce shows up exactly when the
 per-rank copies disagree and must be merged.** Parameters never disagree, there's one
 true weight living in pieces. Gradients disagree in general, because each rank saw
 different data. That's the whole reason the two use different collectives.
@@ -250,7 +250,7 @@ comes back later as the parameter all-gather, paid at the moment it's useful. A
 bandwidth win as well as a memory one.
 
 So FSDP is DDP's all-reduce chopped in half, with each half moved to where the data is
-actually needed. Nothing new gets invented. The pieces just run at different times.
+actually needed. Nothing new gets invented; the pieces just run at different times.
 
 To be precise, the second half doesn't carry the same tensor.
 The optimizer steps in between, so the later all-gather moves updated parameter shards,
@@ -269,7 +269,7 @@ fresh w3 automatically at the next forward's all-gather, straight from the one r
 that owns it.
 
 Broadcast is DDP thinking. It assumes replicas that can drift apart. When there's one
-original per weight, staleness isn't a thing you have to prevent. It just can't happen.
+original per weight, there is nothing to go stale.
 
 ## Why not the other collectives?
 
@@ -292,7 +292,7 @@ everything.
 
 ## Run it yourself
 
-Don't take my word for the numbers. This reproduces every value in this post with the
+Every number in this post is checkable. This reproduces them all with the
 [torch.distributed](https://docs.pytorch.org/docs/stable/distributed.html) API directly,
 no FSDP involved:
 
@@ -341,8 +341,8 @@ rank 0 after reduce-scatter: [4.0, 2.0]
 rank 1 after reduce-scatter: [6.0, 4.0]
 ```
 
-It runs on two GPUs over NCCL, or on plain CPU over gloo, and the fallback branch is a
-small lesson in itself: `ReduceOp.AVG` is NCCL only, so on CPU you sum and divide
+It runs on two GPUs over NCCL, or on plain CPU over gloo, and the fallback branch is
+worth noticing: `ReduceOp.AVG` is NCCL only, so on CPU you sum and divide
 yourself. Verified on PyTorch 2.11.0.
 
 ## The check that fixed my mental model
@@ -353,7 +353,7 @@ I've slipped back into DDP world. In FSDP world:
 
 - permanent state is shards only: weights, grads, optimizer moments, all 1/W
 - full tensors are photocopies that live for one layer's compute
-- there's one original of every number, so "keeping copies in sync" isn't a concept
+- there's one original of every number, so there are no copies to keep in sync
 
 And if the copies flowing through a collective disagree with each other, expect a
 reduce in its name. If they're complementary pieces of one thing, expect a gather.
