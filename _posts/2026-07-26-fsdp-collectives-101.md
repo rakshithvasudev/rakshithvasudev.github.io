@@ -12,7 +12,7 @@ because both are wrong there. Not slightly wrong, either: the mental
 model underneath is wrong. Working out why fixed my understanding of FSDP more than
 anything else, so this post is that explanation: what all-gather and reduce-scatter
 actually do, why reduce-scatter specifically is the right collective after backward, and
-why broadcast and all-reduce are answers to questions FSDP never asks.
+why FSDP has no use for broadcast or all-reduce.
 
 Before the story starts, the two operations themselves, in plain terms, no FSDP
 attached. **All-gather**: every rank contributes its piece of a tensor, and afterwards
