@@ -915,7 +915,7 @@ times three protocols, minus invalid combinations, priced per call.
 
 ## When the switch does the math
 
-Here's the part that retired my mental model. Everything above assumes GPUs do the
+Here's the part that made me redraw the picture. Everything above assumes GPUs do the
 reducing and links do the moving. On Hopper and newer machines with NVSwitch, the
 switch itself can reduce, and NCCL's fastest single-node algorithm is built on
 that. NVIDIA calls it NVLink SHARP; in the code it's `NCCL_ALGO_NVLS`.
@@ -1507,7 +1507,7 @@ One stress point past the table's right edge: a single in-place all-reduce of
 NVLS plan and ran 362 ms median at 483 GB/s of bus bandwidth, a hair above the
 4 GiB plateau. The memory side of that run lives back in the 100 GB section.
 
-## The mental model that replaced mine
+## The picture that replaced mine
 
 What I had before reading the source: "NCCL does ring all-reduce."
 

@@ -8,8 +8,8 @@ tags: [fsdp, distributed-training, pytorch]
 If you learned distributed training through DDP, you probably carry two instincts: after
 the backward pass, all-reduce the gradients; and if only one place has the freshest
 weights, broadcast them out. I carried both into FSDP and they cost me real confusion,
-because both are wrong there. Not slightly wrong, either: the mental
-model underneath is wrong. Working out why fixed my understanding of FSDP more than
+because both are wrong there. Not slightly wrong, either: the picture
+underneath is wrong. Working out why fixed my understanding of FSDP more than
 anything else, so this post is that explanation: what all-gather and reduce-scatter
 actually do, why reduce-scatter specifically is the right collective after backward, and
 why FSDP has no use for broadcast or all-reduce.
@@ -345,7 +345,7 @@ It runs on two GPUs over NCCL, or on plain CPU over gloo, and the fallback branc
 worth noticing: `ReduceOp.AVG` is NCCL only, so on CPU you sum and divide
 yourself. Verified on PyTorch 2.11.0.
 
-## The check that fixed my mental model
+## Count who permanently holds what
 
 When I'm not sure which collective belongs somewhere, I stop and count who permanently
 holds what. If my answer requires a full copy of anything sitting on a GPU at rest,
