@@ -820,8 +820,16 @@ one LL line, 16 bytes on the wire:
 ```
 
 The price is brutal and paid knowingly: half the wire bytes are flags, so LL tops
-out at 50 percent of link bandwidth. For a 4 KB all-reduce, nobody cares; latency
-is everything.
+out at 50 percent of link bandwidth. That is the intra-node ceiling, where LL's
+buffers are ordinary GPU memory. Between nodes LL pays a second, larger tax:
+NCCL keeps its network buffers in host memory so the CPU proxy can poll the
+flags ([`src/transport/net.cc:917`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/net.cc#L917)),
+which rules out GPUDirect RDMA and drops the practical ceiling to 25 to 50
+percent of peak, depending on the fabric (measured across interconnects in
+["Demystifying NCCL"](https://arxiv.org/abs/2507.04786)). The multi-node tables
+later in this post show the consequence: LL survives only up to 128 KiB there,
+against 1 MiB and beyond inside the node. For a 4 KB all-reduce, nobody cares;
+latency is everything.
 
 **LL128** is the same flag trick with better arithmetic, for paths that can
 guarantee a 128-byte write lands whole and in order: NVLink inside the node, and
