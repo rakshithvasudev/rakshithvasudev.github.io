@@ -1439,8 +1439,8 @@ ring, which suggests that at those sizes the hybrid loses more on its
 inter-node half than the switch half gains.
 
 <div style="text-align:center">
-<svg viewBox="0 0 680 268" width="100%" style="height:auto" role="img" aria-label="Measured bus bandwidth versus message size on 1, 2, and 4 nodes: three curves rising to plateaus of 471, 459, and 357 GB/s">
-<rect x="14" y="6" width="652" height="252" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
+<svg viewBox="0 0 680 284" width="100%" style="height:auto" role="img" aria-label="Measured bus bandwidth versus message size on 1, 2, and 4 nodes: three curves rising to plateaus of 471, 459, and 357 GB/s. The winning algorithm changes along each curve: at 16 MiB it is ring on one node, NVLS_TREE on two, tree on four; from 25 MiB up it is NVLS, NVLS_TREE, and ring.">
+<rect x="14" y="6" width="652" height="268" rx="8" fill="#fafafa" stroke="#e6e6e6"/>
 <line x1="70" y1="184.0" x2="610" y2="184.0" stroke="#eee" stroke-width="1"/>
 <text x="62" y="187.0" text-anchor="end" font-size="9.5" fill="#999">100</text>
 <line x1="70" y1="150.0" x2="610" y2="150.0" stroke="#eee" stroke-width="1"/>
@@ -1458,12 +1458,12 @@ inter-node half than the switch half gains.
 <text x="475.0" y="232" text-anchor="middle" font-size="9.5" fill="#999">1 GiB</text>
 <text x="610.0" y="232" text-anchor="middle" font-size="9.5" fill="#999">4 GiB</text>
 <text x="40" y="40" font-size="9.5" fill="#999">GB/s</text>
-<rect x="120" y="30" width="12" height="4" fill="#4557c9"/>
-<text x="137" y="36" font-size="10" fill="#666">1 node (NVLS)</text>
-<rect x="280" y="30" width="12" height="4" fill="#3a7a3a"/>
-<text x="297" y="36" font-size="10" fill="#666">2 nodes (NVLS_TREE)</text>
-<rect x="440" y="30" width="12" height="4" fill="#dd9a4a"/>
-<text x="457" y="36" font-size="10" fill="#666">4 nodes (Ring)</text>
+<rect x="210" y="30" width="12" height="4" fill="#4557c9"/>
+<text x="227" y="36" font-size="10" fill="#666">1 node</text>
+<rect x="310" y="30" width="12" height="4" fill="#3a7a3a"/>
+<text x="327" y="36" font-size="10" fill="#666">2 nodes</text>
+<rect x="410" y="30" width="12" height="4" fill="#dd9a4a"/>
+<text x="427" y="36" font-size="10" fill="#666">4 nodes</text>
 <polyline points="70.0,131.3 113.5,125.2 181.0,107.5 248.5,82.7 316.0,70.4 340.0,68.1 407.5,64.3 475.0,61.3 610.0,57.9" fill="none" stroke="#4557c9" stroke-width="2"/>
 <circle cx="70.0" cy="131.3" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
 <circle cx="113.5" cy="125.2" r="4" fill="#4557c9" stroke="#fafafa" stroke-width="2"/>
@@ -1497,7 +1497,8 @@ inter-node half than the switch half gains.
 <circle cx="475.0" cy="103.4" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
 <circle cx="610.0" cy="96.6" r="4" fill="#dd9a4a" stroke="#fafafa" stroke-width="2"/>
 <text x="616" y="100" font-size="10.5" font-weight="bold" fill="#dd9a4a">357</text>
-<text x="340" y="252" text-anchor="middle" font-size="10.5" fill="#888">bus bandwidth of the fastest measured plan per size, same four-node pool; every topology climbs to its own plateau</text>
+<text x="340" y="250" text-anchor="middle" font-size="10.5" fill="#888">bus bandwidth of the fastest measured plan per size, same four-node pool; every topology climbs to its own plateau</text>
+<text x="340" y="264" text-anchor="middle" font-size="9.5" fill="#888">the winning plan changes along a line: at 16 MiB, ring (NVLS ties) / NVLS_TREE / tree; from 25 MiB up, NVLS / NVLS_TREE / ring</text>
 </svg>
 </div>
 
