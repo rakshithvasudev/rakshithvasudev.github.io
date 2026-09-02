@@ -824,13 +824,13 @@ one LL line, 16 bytes on the wire:
 
 The price is brutal and paid knowingly: half the wire bytes are flags, so LL tops
 out at 50 percent of link bandwidth. That is the intra-node ceiling, where LL's
-buffers are ordinary GPU memory. Between nodes LL pays a second, larger tax:
+buffers are ordinary GPU memory. Between nodes LL carries a second, larger penalty:
 NCCL keeps its network buffers in host memory so the CPU proxy can poll the
 flags ([`src/transport/net.cc:917`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/transport/net.cc#L917)),
 which rules out GPUDirect RDMA and drops the practical ceiling to 25 to 50
 percent of peak, depending on the fabric (measured across interconnects in
 ["Demystifying NCCL"](https://arxiv.org/abs/2507.04786)). The multi-node tables
-later in this post show the consequence: LL survives only up to 128 KiB there,
+later in this post bear this out: LL survives only up to 128 KiB there,
 against 1 MiB and beyond inside the node. For a 4 KB all-reduce, nobody cares;
 latency is everything.
 
@@ -1156,8 +1156,8 @@ all-reduce latency beat rings by up to 180x. You can sanity-check that number
 with nothing but the hop counts from the cost model section: 24k GPUs is
 about 4,096 nodes, a ring serializes about 8,000 network hops, a tree needs
 about 24. The raw hop ratio is over 300x; the measured 180x sits below it
-because wall-clock latency includes a fixed launch floor that both algorithms
-pay, which compresses the ratio. The same announcement admits what gave out: full bandwidth held
+because wall-clock latency includes a fixed launch floor shared by both
+algorithms, which compresses the ratio. The same announcement admits what gave out: full bandwidth held
 until traffic crossed the InfiniBand fabric's top switch layer. Even the
 algorithm built for scale pays the topology tax we keep running into.
 
