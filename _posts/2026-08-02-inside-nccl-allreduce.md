@@ -263,7 +263,10 @@ Those primitive names are the vocabulary the rest of NCCL is written in.
 `recvReduceSend` means "receive from my ring predecessor, add my contribution,
 send the result to my successor", and it happens as one fused operation: data
 streams from the receive buffer through the adds and out the send buffer without a
-round trip to memory in between. The `postOp=true` on the middle step marks where
+round trip to memory in between. The `direct` prefixes in the skeleton are the
+same operations in their direct-buffer form: when the transport allows it, data
+lands straight in the destination buffer instead of staging through the FIFO,
+so `directRecvReduceDirectSend` reads as `recvReduceSend`. The `postOp=true` on the middle step marks where
 each chunk's sum completes, and any final fixup runs exactly there, like the
 divide of an integer average (floating point averages need no fixup, since every
 contribution was pre-scaled by 1/n on the way in).
@@ -981,9 +984,12 @@ nodes the end-to-end advantage over the best ring is about 30 percent at 4 GiB,
 not 2x; the numbers are in the last section. And in the common unregistered path the scatter and
 gather warp teams still stage your data into the multicast buffers with plain
 copies. Reductions the switch can't express never leave the GPU at all: the
-multimem path covers sums and min/max only (`ncclNvlsSupported`,
-[`src/include/device.h:587`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h#L587)), so a floating point average, which NCCL implements
-as a pre-scaled sum, is routed to ring or tree even on this hardware. So
+multimem path covers plain sums and min/max only (`ncclNvlsSupported`,
+[`src/include/device.h:587`](https://github.com/NVIDIA/nccl/blob/5067397c2676d5aed50042fc39e5c8ee96eb0027/src/include/device.h#L587)), so a floating point average is routed to ring or
+tree even on this hardware, despite being implemented as a sum. The
+disqualifier is the pre-scale: each contribution gets multiplied by 1/n as
+it's read (`hostToDevRedOp` again), and the switch's add has no hook for that
+per-element multiply. So
 "the switch does the math" is precise about the bulk sums, and only the sums.
 The choreography, the staging, and the fixups stay on the GPU; what disappears
 is GPU ALUs touching the reduction and any software notion of a peer.
@@ -1149,7 +1155,9 @@ latency plot in figure 3): on Summit, at up to 24,576 GPUs, small-message
 all-reduce latency beat rings by up to 180x. You can sanity-check that number
 with nothing but the hop counts from the cost model section: 24k GPUs is
 about 4,096 nodes, a ring serializes about 8,000 network hops, a tree needs
-about 24. The same announcement admits what gave out: full bandwidth held
+about 24. The raw hop ratio is over 300x; the measured 180x sits below it
+because wall-clock latency includes a fixed launch floor that both algorithms
+pay, which compresses the ratio. The same announcement admits what gave out: full bandwidth held
 until traffic crossed the InfiniBand fabric's top switch layer. Even the
 algorithm built for scale pays the topology tax we keep running into.
 
